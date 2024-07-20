@@ -13,8 +13,8 @@ new g_bAimBlockMethod = 1;
 
 public plugin_init()
 {
-	register_plugin("Unreal Aim Blocker", "2.0", "karaulov");
-	create_cvar("unreal_no_aim", "2.0", FCVAR_SERVER | FCVAR_SPONLY);
+	register_plugin("Unreal Aim Blocker", "2.1", "karaulov");
+	create_cvar("unreal_no_aim", "2.1", FCVAR_SERVER | FCVAR_SPONLY);
 
 	g_aBlockWeapons = ArrayCreate(64);
 
@@ -99,9 +99,22 @@ public plugin_end()
 // Bypass server side PSILENT [karaul0v first method]
 public PM_Move_HOOK(const id)
 {
-	static Float:vAngles[3];
-	get_pmove(pm_oldangles, vAngles);
-	set_pmove(pm_angles, vAngles);
+	static Float:vAngles1[MAX_PLAYERS + 1][3];
+	static Float:vAngles2[MAX_PLAYERS + 1][3];
+	static Float:vTmpAngles[3];
+	if (id > 0 && id <= MaxClients)
+	{	
+		get_pmove(pm_oldangles, vTmpAngles);
+		set_pmove(pm_oldangles, vAngles1[id]);
+		vAngles1[id][0] = vTmpAngles[0];
+		vAngles1[id][1] = vTmpAngles[1];
+		vAngles1[id][2] = vTmpAngles[2];
+		get_pmove(pm_angles, vTmpAngles);
+		set_pmove(pm_angles, vAngles2[id]);
+		vAngles2[id][0] = vTmpAngles[0];
+		vAngles2[id][1] = vTmpAngles[1];
+		vAngles2[id][2] = vTmpAngles[2];
+	}
 	return HC_CONTINUE;
 }
 
@@ -109,11 +122,12 @@ public PM_Move_HOOK(const id)
 public FM_CmdStart_Pre(id, handle)
 {
 	static buttons[MAX_PLAYERS + 1] = {0, ...};
-	if (id > 0 && id <= MAX_PLAYERS)
+	if (id > 0 && id <= MaxClients)
 	{	
 		new btn = get_uc(handle, UC_Buttons);
 		set_uc(handle, UC_Buttons, buttons[id]);
 		buttons[id] = btn;
+		return FMRES_HANDLED;
 	}
 	return FMRES_IGNORED;
 }
