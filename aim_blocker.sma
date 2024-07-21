@@ -13,8 +13,8 @@ new g_bAimBlockMethod = 1;
 
 public plugin_init()
 {
-	register_plugin("Unreal Aim Blocker", "2.1", "karaulov");
-	create_cvar("unreal_no_aim", "2.1", FCVAR_SERVER | FCVAR_SPONLY);
+	register_plugin("Unreal Aim Blocker", "2.2", "karaulov");
+	create_cvar("unreal_no_aim", "2.2", FCVAR_SERVER | FCVAR_SPONLY);
 
 	g_aBlockWeapons = ArrayCreate(64);
 
@@ -87,6 +87,21 @@ public plugin_init()
 		else 
 		{
 			register_forward(FM_CmdStart, "FM_CmdStart_Pre", false);
+		}
+	}
+	
+	if (g_bAimBlockMethod == 1)
+	{	
+		cfg_set_path("reaimdetector");
+
+		new iNoSpread = 0;
+		cfg_read_int("NOSPREAD","NOSPREAD_DETECTION",iNoSpread,iNoSpread);
+		if (iNoSpread > 0)
+		{
+			log_amx("Detected NOSPREAD_DETECTION = %i in reaimdetector.cfg!",iNoSpread);
+			cfg_write_int("NOSPREAD","NOSPREAD_DETECTION",0);
+			server_cmd("reaim_reloadcfg");
+			log_amx("Reloaded reaimdetector.cfg!");
 		}
 	}
 }
