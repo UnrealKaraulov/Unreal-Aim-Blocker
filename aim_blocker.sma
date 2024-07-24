@@ -141,14 +141,6 @@ public plugin_init()
 	}
 }
 
-public client_command(id)
-{
-	static szCommand[256];
-	read_args(szCommand, charsmax(szCommand));
-
-	log_amx("Client %i command: %s",id, szCommand);
-}
-
 public client_disconnected(id)
 {
 	g_bCurScore[id] = g_bWaitForBuyZone[id] = false;
