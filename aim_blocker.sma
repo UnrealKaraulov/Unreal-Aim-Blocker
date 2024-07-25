@@ -30,6 +30,8 @@ new bool:g_bCurScore[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bWaitForBuyZone[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bRadarFix[MAX_PLAYERS + 1] = {false, ...};
 
+new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
+
 new Float:g_vAngles1[MAX_PLAYERS + 1][3];
 new Float:g_vAngles2[MAX_PLAYERS + 1][3];
 
@@ -200,41 +202,53 @@ public FM_CmdStart_Pre(id, handle)
 			{
 				if (g_bCurScore[id])
 				{
-					if (g_iAimBlockMethod != 1)
-					{
-						set_member(id, m_flNextAttack, 0.1);
-					}
+					set_member(id, m_flNextAttack, 0.1);
 				}
 			}
 
-			if (g_bWaitForBuyZone[id])
+			if (g_bBlockScoreLocalDead)
 			{
-				if (rg_get_user_buyzone(id))
+				if (g_bWaitForBuyZone[id])
 				{
-					UpdateUserScoreForPlayer(id, id);
-					g_bWaitForBuyZone[id] = false;
-				}
-				else 
-				{
-					g_bRadarFix[id] = !g_bRadarFix[id];
-					if (g_bRadarFix[id])
+					if (rg_get_user_buyzone(id))
 					{
 						UpdateUserScoreForPlayer(id, id);
+						g_bWaitForBuyZone[id] = false;
+						
+						// force update scoreboard 
+						message_begin(MSG_ONE_UNRELIABLE, g_iScoreInfoMsg, _,id);
+						write_byte(33); // is safe!
+						write_short(0);
+						write_short(0);
+						write_short(0);
+						write_short(0);
+						message_end();
 					}
 					else 
 					{
-						message_begin(MSG_ONE_UNRELIABLE, g_iScoreAttribMsg, _, id);
-						write_byte(id);
-						write_byte(SCORE_STATUS_DEAD);
-						message_end();
+						if (g_bRadarFix[id] && floatabs(get_gametime() - g_fRadarUpdateTime[id]) > 0.1)
+						{
+							g_bRadarFix[id] = !g_bRadarFix[id];
+							UpdateUserScoreForPlayer(id, id);
+							g_fRadarUpdateTime[id] = get_gametime();
+						}
+						else if (!g_bRadarFix[id] && floatabs(get_gametime() - g_fRadarUpdateTime[id]) > 0.25)
+						{
+							g_bRadarFix[id] = !g_bRadarFix[id];
+							message_begin(MSG_ONE_UNRELIABLE, g_iScoreAttribMsg, _, id);
+							write_byte(id);
+							write_byte(SCORE_STATUS_DEAD);
+							message_end();
+							g_fRadarUpdateTime[id] = get_gametime();
+						}
 					}
 				}
-			}
-			else if (g_bBlockScoreLocalDead)
-			{
-				if (!rg_get_user_buyzone(id))
+				else
 				{
-					g_bWaitForBuyZone[id] = true;
+					if (!rg_get_user_buyzone(id))
+					{
+						g_bWaitForBuyZone[id] = true;
+					}
 				}
 			}
 
