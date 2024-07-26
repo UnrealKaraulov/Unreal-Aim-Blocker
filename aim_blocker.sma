@@ -37,8 +37,8 @@ new Float:g_vAngles2[MAX_PLAYERS + 1][3];
 
 public plugin_init()
 {
-	register_plugin("Unreal Aim Blocker", "2.3", "karaulov");
-	create_cvar("unreal_no_aim", "2.3", FCVAR_SERVER | FCVAR_SPONLY);
+	register_plugin("Unreal Aim Blocker", "2.4", "karaulov");
+	create_cvar("unreal_no_aim", "2.4", FCVAR_SERVER | FCVAR_SPONLY);
 
 	g_aBlockWeapons = ArrayCreate(64);
 
@@ -458,7 +458,11 @@ stock UpdateUserScoreForPlayer(id, iPlayer)
 
 	if (iState & (SCORE_STATUS_BOMB | SCORE_STATUS_DEFKIT) && GetForceCamera() != CAMERA_MODE_SPEC_ANYONE)
 	{
+#if REAPI_VERSION > 524300
 		if (rg_player_relationship(id, iPlayer) != GR_TEAMMATE)
+#else
+		if (get_member(iPlayer, m_iTeam) != get_member(id, m_iTeam))
+#endif
 			iState &= ~(SCORE_STATUS_BOMB | SCORE_STATUS_DEFKIT);
 	}
 
