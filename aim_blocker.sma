@@ -40,8 +40,8 @@ new Float:g_vAngles2[MAX_PLAYERS + 1][3];
 
 public plugin_init()
 {
-	register_plugin("Unreal Aim Blocker", "2.5", "karaulov");
-	create_cvar("unreal_no_aim", "2.5", FCVAR_SERVER | FCVAR_SPONLY);
+	register_plugin("Unreal Aim Blocker", "2.6", "karaulov");
+	create_cvar("unreal_no_aim", "2.6", FCVAR_SERVER | FCVAR_SPONLY);
 
 	g_aBlockWeapons = ArrayCreate(64);
 
