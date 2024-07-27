@@ -12,11 +12,6 @@ new const DEFAULT_BLOCKWEAPON_LIST[][] = { "weapon_p228", "weapon_xm1014", "weap
 
 new Array:g_aBlockWeapons;
 
-new bool:g_bBlockScoreAttr = true;
-new bool:g_bBlockScoreAttrAttack = false;
-new bool:g_bBlockScoreLocalDead = false;
-new bool:g_bShowDef = false;
-
 new g_iAimBlockMethod = 1;
 new g_iScoreAttribMsg = 0;
 new g_iScoreInfoMsg = 0;
@@ -25,20 +20,28 @@ new g_iForcecamera = 0;
 new g_iFadetoblack = 0;
 
 new g_iButtons[MAX_PLAYERS + 1] = {0, ...};
+new g_iButtons_old[MAX_PLAYERS + 1] = {0, ...};
+
+new bool:g_bBlockScoreAttr = true;
+new bool:g_bBlockScoreAttrAttack = false;
+new bool:g_bBlockScoreLocalDead = false;
+new bool:g_bShowDef = false;
 
 new bool:g_bCurScore[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bWaitForBuyZone[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bRadarFix[MAX_PLAYERS + 1] = {false, ...};
 
 new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_fRadarStayTime = 0.45;
+new Float:g_fRadarDeadTime = 0.05;
 
 new Float:g_vAngles1[MAX_PLAYERS + 1][3];
 new Float:g_vAngles2[MAX_PLAYERS + 1][3];
 
 public plugin_init()
 {
-	register_plugin("Unreal Aim Blocker", "2.4", "karaulov");
-	create_cvar("unreal_no_aim", "2.4", FCVAR_SERVER | FCVAR_SPONLY);
+	register_plugin("Unreal Aim Blocker", "2.5", "karaulov");
+	create_cvar("unreal_no_aim", "2.5", FCVAR_SERVER | FCVAR_SPONLY);
 
 	g_aBlockWeapons = ArrayCreate(64);
 
@@ -66,10 +69,17 @@ public plugin_init()
 	new iBlockWeaponCount = 0;
 	cfg_read_int("general","block_weapon_count",iBlockWeaponCount,iBlockWeaponCount);
 	cfg_read_int("general","aim_block_method",g_iAimBlockMethod,g_iAimBlockMethod);
-	cfg_read_bool("general","block_score_attr",g_bBlockScoreAttr,g_bBlockScoreAttr);
+	cfg_read_bool("general","block_score",g_bBlockScoreAttr,g_bBlockScoreAttr);
 	cfg_read_bool("general","block_score_attack",g_bBlockScoreAttrAttack,g_bBlockScoreAttrAttack);
 	cfg_read_bool("general","block_score_local_dead",g_bBlockScoreLocalDead,g_bBlockScoreLocalDead);
+	cfg_read_flt("general","block_score_radar_staytime",g_fRadarStayTime,g_fRadarStayTime);
+	cfg_read_flt("general","block_score_radar_deadtime",g_fRadarDeadTime,g_fRadarDeadTime);
 
+	if (g_fRadarStayTime < 0.1)
+		g_fRadarStayTime = 0.1;
+
+	if (g_fRadarDeadTime < 0.01)
+		g_fRadarDeadTime = 0.01;
 
 	new sWeaponName[64];
 	new sWeaponId[64];
@@ -105,14 +115,12 @@ public plugin_init()
 	}
 
 
-	if (g_iAimBlockMethod > 0)
-	{
-		if (g_iAimBlockMethod == 1)
-		{	
-			RegisterHookChain(RG_PM_Move, "PM_Move_HOOK", .post = true);
-		}
-	}
 	
+	if (g_iAimBlockMethod == 1)
+	{	
+		RegisterHookChain(RG_PM_Move, "PM_Move_HOOK", .post = true);
+	}
+
 	register_forward(FM_CmdStart, "FM_CmdStart_Pre", false);
 
 	if (g_iAimBlockMethod == 1)
@@ -148,7 +156,7 @@ public client_disconnected(id)
 	g_bCurScore[id] = g_bWaitForBuyZone[id] = false;
 	g_vAngles1[id][0] = g_vAngles1[id][1] = g_vAngles1[id][2] = 0.0;
 	g_vAngles2[id][0] = g_vAngles2[id][1] = g_vAngles2[id][2] = 0.0;
-	g_iButtons[id] = 0;
+	g_iButtons[id] = g_iButtons_old[id] = 0;
 }
 
 public client_connectex(id)
@@ -156,7 +164,7 @@ public client_connectex(id)
 	g_bCurScore[id] = g_bWaitForBuyZone[id] = false;
 	g_vAngles1[id][0] = g_vAngles1[id][1] = g_vAngles1[id][2] = 0.0;
 	g_vAngles2[id][0] = g_vAngles2[id][1] = g_vAngles2[id][2] = 0.0;
-	g_iButtons[id] = 0;
+	g_iButtons[id] = g_iButtons_old[id] = 0;
 }
 
 public plugin_end()
@@ -226,13 +234,13 @@ public FM_CmdStart_Pre(id, handle)
 					}
 					else 
 					{
-						if (g_bRadarFix[id] && floatabs(get_gametime() - g_fRadarUpdateTime[id]) > 0.1)
+						if (g_bRadarFix[id] && floatabs(get_gametime() - g_fRadarUpdateTime[id]) > g_fRadarDeadTime)
 						{
 							g_bRadarFix[id] = !g_bRadarFix[id];
 							UpdateUserScoreForPlayer(id, id);
 							g_fRadarUpdateTime[id] = get_gametime();
 						}
-						else if (!g_bRadarFix[id] && floatabs(get_gametime() - g_fRadarUpdateTime[id]) > 0.25)
+						else if (!g_bRadarFix[id] && floatabs(get_gametime() - g_fRadarUpdateTime[id]) > g_fRadarStayTime)
 						{
 							g_bRadarFix[id] = !g_bRadarFix[id];
 							message_begin(MSG_ONE_UNRELIABLE, g_iScoreAttribMsg, _, id);
@@ -327,8 +335,12 @@ public FM_CmdStart_Pre(id, handle)
 			}
 		}
 
-		if (g_iAimBlockMethod == 1)
+		if (g_iAimBlockMethod == 2)
 		{
+			new tmpbutton = get_entvar(id, var_oldbuttons);
+			set_entvar(id, var_oldbuttons, g_iButtons_old[id]);
+			g_iButtons_old[id] = tmpbutton;
+
 			set_uc(handle, UC_Buttons, g_iButtons[id]);
 			bHandled = true;
 		}
