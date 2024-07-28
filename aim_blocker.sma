@@ -4,6 +4,7 @@
 #include <fakemeta>
 #include <easy_cfg>
 #include <cssdk_const>
+#include <xs>
 
 #pragma ctrlchar '\'
 
@@ -21,15 +22,20 @@ new g_iFadetoblack = 0;
 
 new g_iButtons[MAX_PLAYERS + 1] = {0, ...};
 new g_iButtons_old[MAX_PLAYERS + 1] = {0, ...};
+new g_iCmdCounter[MAX_PLAYERS + 1] = {0, ...};
+new g_iCmdMsecCounter[MAX_PLAYERS + 1] = {0, ...};
+new g_iBlockMove[MAX_PLAYERS + 1] = {0, ...};
 
 new bool:g_bBlockScoreAttr = true;
 new bool:g_bBlockScoreAttrAttack = false;
 new bool:g_bBlockScoreLocalDead = false;
 new bool:g_bShowDef = false;
+new bool:g_bBlockBadCmd = false;
 
 new bool:g_bCurScore[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bWaitForBuyZone[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bRadarFix[MAX_PLAYERS + 1] = {false, ...};
+new bool:g_bUserBot[MAX_PLAYERS + 1] = {false, ...};
 
 new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fRadarStayTime = 0.45;
@@ -37,11 +43,13 @@ new Float:g_fRadarDeadTime = 0.05;
 
 new Float:g_vAngles1[MAX_PLAYERS + 1][3];
 new Float:g_vAngles2[MAX_PLAYERS + 1][3];
+new Float:g_vCmdCheckTime[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 
 public plugin_init()
 {
-	register_plugin("Unreal Aim Blocker", "2.6", "karaulov");
-	create_cvar("unreal_no_aim", "2.6", FCVAR_SERVER | FCVAR_SPONLY);
+	register_plugin("Unreal Aim Blocker", "2.7 beta", "karaulov");
+	create_cvar("unreal_no_aim", "2.7_beta", FCVAR_SERVER | FCVAR_SPONLY);
 
 	g_aBlockWeapons = ArrayCreate(64);
 
@@ -74,7 +82,8 @@ public plugin_init()
 	cfg_read_bool("general","block_score_local_dead",g_bBlockScoreLocalDead,g_bBlockScoreLocalDead);
 	cfg_read_flt("general","block_score_radar_staytime",g_fRadarStayTime,g_fRadarStayTime);
 	cfg_read_flt("general","block_score_radar_deadtime",g_fRadarDeadTime,g_fRadarDeadTime);
-
+	cfg_read_bool("general","block_bad_cmd",g_bBlockBadCmd,g_bBlockBadCmd);
+	
 	if (g_fRadarStayTime < 0.1)
 		g_fRadarStayTime = 0.1;
 
@@ -113,10 +122,8 @@ public plugin_init()
 			RegisterHam(Ham_Item_Deploy, sWeaponName, "fw_block_weapon_secondary", 1);
 		}
 	}
-
-
 	
-	if (g_iAimBlockMethod == 1)
+	if (g_iAimBlockMethod == 1 || g_bBlockBadCmd)
 	{	
 		RegisterHookChain(RG_PM_Move, "PM_Move_HOOK", .post = true);
 	}
@@ -140,31 +147,71 @@ public plugin_init()
 
 	if (g_bBlockScoreAttr)
 	{
+		g_bShowDef = get_cvar_float("mp_scoreboard_showdefkit") != 0.0;
+
 		g_iScoreAttribMsg = get_user_msgid("ScoreAttrib");
 		g_iScoreInfoMsg = get_user_msgid("ScoreInfo");
-		register_message(g_iScoreAttribMsg, "ScoreAttrib_HOOK");
-		g_bShowDef = get_cvar_float("mp_scoreboard_showdefkit") != 0.0;
-		g_iForcechasecam = get_cvar_num("mp_forcechasecam");
-		g_iForcecamera = get_cvar_num("mp_forcecamera");
-		g_iFadetoblack = get_cvar_num("mp_fadetoblack");
 
+		bind_pcvar_num(get_cvar_pointer("mp_forcechasecam"), g_iForcechasecam);
+		bind_pcvar_num(get_cvar_pointer("mp_forcecamera"), g_iForcecamera);
+		bind_pcvar_num(get_cvar_pointer("mp_fadetoblack"), g_iFadetoblack);
+
+		register_message(g_iScoreAttribMsg, "ScoreAttrib_HOOK");
 	}
+}
+
+public clear_client(id)
+{
+	g_bCurScore[id] = g_bWaitForBuyZone[id] = false;
+	g_vAngles1[id][0] = g_vAngles1[id][1] = g_vAngles1[id][2] = 0.0;
+	g_vAngles2[id][0] = g_vAngles2[id][1] = g_vAngles2[id][2] = 0.0;
+	g_iButtons[id] = g_iButtons_old[id] = 0;
+	g_vCmdCheckTime[id] = 0.0;
+	g_iCmdCounter[id] = 0;
+	g_iCmdMsecCounter[id] = 0;
+	g_iBlockMove[id] = 0;
+	g_bUserBot[id] = false;
 }
 
 public client_disconnected(id)
 {
-	g_bCurScore[id] = g_bWaitForBuyZone[id] = false;
-	g_vAngles1[id][0] = g_vAngles1[id][1] = g_vAngles1[id][2] = 0.0;
-	g_vAngles2[id][0] = g_vAngles2[id][1] = g_vAngles2[id][2] = 0.0;
-	g_iButtons[id] = g_iButtons_old[id] = 0;
+	clear_client(id);
 }
 
 public client_connectex(id)
 {
-	g_bCurScore[id] = g_bWaitForBuyZone[id] = false;
-	g_vAngles1[id][0] = g_vAngles1[id][1] = g_vAngles1[id][2] = 0.0;
-	g_vAngles2[id][0] = g_vAngles2[id][1] = g_vAngles2[id][2] = 0.0;
-	g_iButtons[id] = g_iButtons_old[id] = 0;
+	clear_client(id);
+	g_vCmdCheckTime[id] = get_gametime();
+}
+
+public client_putinserver(id)
+{
+	g_vCL_movespeedkey[id] = 0.52;
+	g_bUserBot[id] = is_user_bot(id) || is_user_hltv(id);
+	if (g_bBlockBadCmd && !g_bUserBot[id])
+	{
+		query_client_cvar(id, "cl_movespeedkey", "update_client_movespeedkey");
+		set_task(5.0, "query_client_movespeedkey", id);
+	}
+}
+
+public update_client_movespeedkey(id, const cvar[], const value[])
+{
+	g_vCL_movespeedkey[id] = str_to_float(value);
+	// max playable speed
+	if (g_vCL_movespeedkey[id] <= 0.01 || g_vCL_movespeedkey[id] > 0.52)
+	{
+		g_vCL_movespeedkey[id] = 0.52;
+	}
+}
+
+public query_client_movespeedkey(id)
+{
+	if (!g_bUserBot[id] && is_user_connected(id))
+	{
+		query_client_cvar(id, "cl_movespeedkey", "update_client_movespeedkey");
+		set_task(5.0, "query_client_movespeedkey", id);
+	}
 }
 
 public plugin_end()
@@ -172,34 +219,150 @@ public plugin_end()
 	ArrayDestroy(g_aBlockWeapons);
 }
 
-// Bypass server side PSILENT [karaul0v first method]
 public PM_Move_HOOK(const id)
 {
 	static Float:vTmpAngles[3];
 	if (id > 0 && id <= MaxClients)
 	{	
-		get_pmove(pm_oldangles, vTmpAngles);
-		set_pmove(pm_oldangles, g_vAngles1[id]);
-		g_vAngles1[id][0] = vTmpAngles[0];
-		g_vAngles1[id][1] = vTmpAngles[1];
-		g_vAngles1[id][2] = vTmpAngles[2];
-		get_pmove(pm_angles, vTmpAngles);
-		set_pmove(pm_angles, g_vAngles2[id]);
-		g_vAngles2[id][0] = vTmpAngles[0];
-		g_vAngles2[id][1] = vTmpAngles[1];
-		g_vAngles2[id][2] = vTmpAngles[2];
+		if (g_iAimBlockMethod == 1)
+		{
+			get_pmove(pm_oldangles, vTmpAngles);
+			set_pmove(pm_oldangles, g_vAngles1[id]);
+			g_vAngles1[id][0] = vTmpAngles[0];
+			g_vAngles1[id][1] = vTmpAngles[1];
+			g_vAngles1[id][2] = vTmpAngles[2];
+			get_pmove(pm_angles, vTmpAngles);
+			set_pmove(pm_angles, g_vAngles2[id]);
+			g_vAngles2[id][0] = vTmpAngles[0];
+			g_vAngles2[id][1] = vTmpAngles[1];
+			g_vAngles2[id][2] = vTmpAngles[2];
+		}
+
+		if (g_bBlockBadCmd)
+		{
+			if (g_iBlockMove[id] > 0)
+			{
+				get_pmove(pm_velocity, vTmpAngles);
+				vTmpAngles[0] /= 1.2;
+				vTmpAngles[1] /= 1.2;
+				set_pmove(pm_velocity, vTmpAngles);
+
+				if (g_iBlockMove[id] > 1)
+				{
+					get_entvar(id, var_velocity, vTmpAngles);
+					vTmpAngles[0] /= 2.0;
+					vTmpAngles[1] /= 2.0;
+					set_entvar(id, var_velocity, vTmpAngles);
+				}
+				
+			}
+			else if (g_iBlockMove[id] == -1)
+			{
+				return HC_BREAK
+			}
+		}
 	}
 	return HC_CONTINUE;
 }
 
-// Bypass server side PSILENT [karaul0v second method]
+public force_drop_client_bad_fps(id)
+{
+	if (is_user_connected(id))
+	{
+		clear_client(id);
+		rh_drop_client(id, "BAD FPS");
+	}
+}
+
 public FM_CmdStart_Pre(id, handle)
 {
-	if (id > 0 && id <= MaxClients)
+	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
 	{	
 		new btn = get_uc(handle, UC_Buttons);
 		new bool:bHandled = false;
-		
+
+		if (g_bBlockBadCmd)
+		{
+			new iMsec = get_uc(handle, UC_Msec);
+			new Float:fMaxMov = get_entvar(id,var_maxspeed);
+
+			if (iMsec < 1)
+			{
+				/*g_iBlockMove[id] -=100;
+				if (g_iBlockMove[id] <= -200 && g_iBlockMove[id] >= -500)
+				{*/
+				set_task(0.01,"force_drop_client_bad_fps",id);
+				return FMRES_SUPERCEDE;
+				//}
+			}
+			else if (fMaxMov > 0.0 && is_user_alive(id))
+			{
+				new Float:fForward = 0.0;
+				get_uc(handle, UC_ForwardMove, fForward);
+				new Float:fSide = 0.0;
+				get_uc(handle, UC_SideMove, fSide);
+				new Float:fUp = 0.0;
+				get_uc(handle, UC_UpMove, fUp);
+
+				if ( fForward != 0.0 || fSide != 0.0 || fUp != 0.0 )
+				{
+					new Float:fmov = xs_sqrt((fForward * fForward) + (fSide * fSide) + (fUp * fUp));
+					new Float:fmov2 = fmov / g_vCL_movespeedkey[id];
+
+					if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT == 0 && fSide != 0.0)
+					{
+						g_iBlockMove[id]++;
+						//log_amx("[%i] bad cmd1 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
+					}
+					else if (btn & IN_FORWARD == 0 && btn & IN_BACK == 0 && fForward != 0.0)
+					{
+						g_iBlockMove[id]++;
+						//log_amx("[%i] bad cmd2 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
+					}
+					else if (floatabs(fmov - fMaxMov) > 5.0 && floatabs(fmov2 - fMaxMov) > 5.0)
+					{
+						/*if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT == 0)
+							fSide = 0.0;
+						if (btn & IN_FORWARD == 0 && btn & IN_BACK == 0)
+							fForward = 0.0;*/
+						
+						/*if (g_iBlockMove[id] < 0)
+							g_iBlockMove[id] = 0;
+						*/
+						if (g_iBlockMove[id] == 0)
+						{
+							new Float:fmov3 = fmov * 1.25;
+							new Float:fmov4 = fmov2 * 1.25;
+							if (floatabs(fmov3 - fMaxMov) > 5.0 && floatabs(fmov4 - fMaxMov) > 5.0)
+							{
+								g_iBlockMove[id]++;
+								//log_amx("[%i] bad fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
+							}
+							else 
+							{
+								//log_amx("[%i] good2 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
+								g_iBlockMove[id] = 0;
+							}
+						}
+						else 
+						{
+							g_iBlockMove[id]++;
+							//log_amx("[%i] bad fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
+						}
+					}
+					else 
+					{
+						//log_amx("[%i] good fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
+						g_iBlockMove[id] = 0;
+					}
+				}
+				else 
+				{
+					g_iBlockMove[id] = 0;
+				}
+			}
+		}
+
 		if (g_bBlockScoreAttr)
 		{
 			// Use score attrib message [like in softblocker]
@@ -340,7 +503,6 @@ public FM_CmdStart_Pre(id, handle)
 			new tmpbutton = get_entvar(id, var_oldbuttons);
 			set_entvar(id, var_oldbuttons, g_iButtons_old[id]);
 			g_iButtons_old[id] = tmpbutton;
-
 			set_uc(handle, UC_Buttons, g_iButtons[id]);
 			bHandled = true;
 		}
