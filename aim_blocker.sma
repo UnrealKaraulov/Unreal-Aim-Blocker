@@ -21,7 +21,7 @@ new g_iForcecamera = 0;
 new g_iFadetoblack = 0;
 
 new g_iButtons[MAX_PLAYERS + 1] = {0, ...};
-new g_iButtons_old[MAX_PLAYERS + 1] = {0, ...};
+//new g_iButtons_old[MAX_PLAYERS + 1] = {0, ...};
 new g_iCmdCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iCmdMsecCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iBlockMove[MAX_PLAYERS + 1] = {0, ...};
@@ -46,10 +46,12 @@ new Float:g_vAngles2[MAX_PLAYERS + 1][3];
 new Float:g_vCmdCheckTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 
+new const PLUGIN_VERSION[] = "2.8";
+
 public plugin_init()
 {
-	register_plugin("Unreal Aim Blocker", "2.7 beta", "karaulov");
-	create_cvar("unreal_no_aim", "2.7_beta", FCVAR_SERVER | FCVAR_SPONLY);
+	register_plugin("Unreal Aim Blocker", PLUGIN_VERSION, "karaulov");
+	create_cvar("unreal_no_aim", PLUGIN_VERSION, FCVAR_SERVER | FCVAR_SPONLY);
 
 	g_aBlockWeapons = ArrayCreate(64);
 
@@ -123,13 +125,17 @@ public plugin_init()
 		}
 	}
 	
-	if (g_iAimBlockMethod == 1 || g_bBlockBadCmd)
+	if (g_iAimBlockMethod == 1)
 	{	
-		RegisterHookChain(RG_PM_Move, "PM_Move_HOOK", .post = true);
+		RegisterHookChain(RG_PM_Move, "PM_Move_Post", .post = true);
 	}
 
+	if (g_iAimBlockMethod == 2 || g_bBlockBadCmd)
+	{
+		RegisterHookChain(RG_PM_Move, "PM_Move_Pre", .post = false);
+	}
+	
 	register_forward(FM_CmdStart, "FM_CmdStart_Pre", false);
-
 	if (g_iAimBlockMethod == 1)
 	{	
 		cfg_set_path("reaimdetector");
@@ -158,6 +164,18 @@ public plugin_init()
 
 		register_message(g_iScoreAttribMsg, "ScoreAttrib_HOOK");
 	}
+
+
+	log_amx("AimBlocker [v%s] loaded!", PLUGIN_VERSION);
+	log_amx("Settings: ");
+	log_amx("  aim_block_method = %i",g_iAimBlockMethod);
+	log_amx("  block_weapon_count = %i",iBlockWeaponCount);
+	log_amx("  block_bad_cmd = %i",g_bBlockBadCmd);
+	log_amx("  block_score = %i",g_bBlockScoreAttr);
+	log_amx("  block_score_attack = %i",g_bBlockScoreAttrAttack);
+	log_amx("  block_score_local_dead = %i",g_bBlockScoreLocalDead);
+	log_amx("  block_score_radar_staytime = %f",g_fRadarStayTime);
+	log_amx("  block_score_radar_deadtime = %f",g_fRadarDeadTime);
 }
 
 public clear_client(id)
@@ -165,7 +183,7 @@ public clear_client(id)
 	g_bCurScore[id] = g_bWaitForBuyZone[id] = false;
 	g_vAngles1[id][0] = g_vAngles1[id][1] = g_vAngles1[id][2] = 0.0;
 	g_vAngles2[id][0] = g_vAngles2[id][1] = g_vAngles2[id][2] = 0.0;
-	g_iButtons[id] = g_iButtons_old[id] = 0;
+	g_iButtons[id] = /*g_iButtons_old[id] =*/ 0;
 	g_vCmdCheckTime[id] = 0.0;
 	g_iCmdCounter[id] = 0;
 	g_iCmdMsecCounter[id] = 0;
@@ -219,10 +237,10 @@ public plugin_end()
 	ArrayDestroy(g_aBlockWeapons);
 }
 
-public PM_Move_HOOK(const id)
+public PM_Move_Post(const id)
 {
 	static Float:vTmpAngles[3];
-	if (id > 0 && id <= MaxClients)
+	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
 	{	
 		if (g_iAimBlockMethod == 1)
 		{
@@ -236,6 +254,20 @@ public PM_Move_HOOK(const id)
 			g_vAngles2[id][0] = vTmpAngles[0];
 			g_vAngles2[id][1] = vTmpAngles[1];
 			g_vAngles2[id][2] = vTmpAngles[2];
+		}
+	}
+	return HC_CONTINUE;
+}
+
+public PM_Move_Pre(const id)
+{
+	static Float:vTmpAngles[3];
+	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
+	{	
+		if (g_iAimBlockMethod == 2)
+		{
+			new cmd = get_pmove(pm_cmd);
+			set_ucmd(cmd,ucmd_buttons, get_entvar(id, var_button));
 		}
 
 		if (g_bBlockBadCmd)
@@ -254,23 +286,8 @@ public PM_Move_HOOK(const id)
 					vTmpAngles[1] /= 2.0;
 					set_entvar(id, var_velocity, vTmpAngles);
 				}
-				
-			}
-			else if (g_iBlockMove[id] == -1)
-			{
-				return HC_BREAK
 			}
 		}
-	}
-	return HC_CONTINUE;
-}
-
-public force_drop_client_bad_fps(id)
-{
-	if (is_user_connected(id))
-	{
-		clear_client(id);
-		rh_drop_client(id, "BAD FPS");
 	}
 }
 
@@ -288,12 +305,8 @@ public FM_CmdStart_Pre(id, handle)
 
 			if (iMsec < 1)
 			{
-				/*g_iBlockMove[id] -=100;
-				if (g_iBlockMove[id] <= -200 && g_iBlockMove[id] >= -500)
-				{*/
 				set_task(0.01,"force_drop_client_bad_fps",id);
 				return FMRES_SUPERCEDE;
-				//}
 			}
 			else if (fMaxMov > 0.0 && is_user_alive(id))
 			{
@@ -319,16 +332,23 @@ public FM_CmdStart_Pre(id, handle)
 						g_iBlockMove[id]++;
 						//log_amx("[%i] bad cmd2 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
 					}
+					else if (btn & IN_MOVERIGHT != 0 && btn & IN_MOVELEFT == 0 && fSide < -1.0)
+					{
+						g_iBlockMove[id]++;
+						//log_amx("[%i] bad cmd3 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
+					}
+					else if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT != 0 && fSide > 1.0)
+					{
+						g_iBlockMove[id]++;
+						//log_amx("[%i] bad cmd4 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
+					}
+					else if (btn & IN_FORWARD != 0 && btn & IN_BACK == 0 && fForward < -1.0)
+					{
+						g_iBlockMove[id]++;
+						//log_amx("[%i] bad cmd5 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
+					}
 					else if (floatabs(fmov - fMaxMov) > 5.0 && floatabs(fmov2 - fMaxMov) > 5.0)
 					{
-						/*if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT == 0)
-							fSide = 0.0;
-						if (btn & IN_FORWARD == 0 && btn & IN_BACK == 0)
-							fForward = 0.0;*/
-						
-						/*if (g_iBlockMove[id] < 0)
-							g_iBlockMove[id] = 0;
-						*/
 						if (g_iBlockMove[id] == 0)
 						{
 							new Float:fmov3 = fmov * 1.25;
@@ -500,9 +520,9 @@ public FM_CmdStart_Pre(id, handle)
 
 		if (g_iAimBlockMethod == 2)
 		{
-			new tmpbutton = get_entvar(id, var_oldbuttons);
+			/*new tmpbutton = get_entvar(id, var_oldbuttons);
 			set_entvar(id, var_oldbuttons, g_iButtons_old[id]);
-			g_iButtons_old[id] = tmpbutton;
+			g_iButtons_old[id] = tmpbutton;*/
 			set_uc(handle, UC_Buttons, g_iButtons[id]);
 			bHandled = true;
 		}
@@ -651,4 +671,13 @@ stock bool:rg_get_user_buyzone(const pClient) {
     get_member(pClient, m_signals, iSignals);
 
     return bool:(SignalState:iSignals[US_State] & SIGNAL_BUY);
+}
+
+stock force_drop_client_bad_fps(id)
+{
+	if (is_user_connected(id))
+	{
+		clear_client(id);
+		rh_drop_client(id, "BAD FPS");
+	}
 }
