@@ -25,28 +25,35 @@ new g_iButtons[MAX_PLAYERS + 1] = {0, ...};
 new g_iCmdCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iCmdMsecCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iBlockMove[MAX_PLAYERS + 1] = {0, ...};
+new g_iStepCounter[MAX_PLAYERS + 1] = {0, ...};
 
 new bool:g_bBlockScoreAttr = true;
 new bool:g_bBlockScoreAttrAttack = false;
 new bool:g_bBlockScoreLocalDead = false;
 new bool:g_bShowDef = false;
 new bool:g_bBlockBadCmd = false;
+new bool:g_bBlockSpeedHack = false;
 
 new bool:g_bCurScore[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bWaitForBuyZone[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bRadarFix[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bUserBot[MAX_PLAYERS + 1] = {false, ...};
 
+new Float:g_fOldStepVol[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_fStepTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fRadarStayTime = 0.45;
 new Float:g_fRadarDeadTime = 0.05;
+new Float:g_fSpeedHackTime = 0.30;
 
 new Float:g_vAngles1[MAX_PLAYERS + 1][3];
 new Float:g_vAngles2[MAX_PLAYERS + 1][3];
 new Float:g_vCmdCheckTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
 
-new const PLUGIN_VERSION[] = "2.8";
+
+new const PLUGIN_VERSION[] = "2.9";
 
 public plugin_init()
 {
@@ -85,6 +92,8 @@ public plugin_init()
 	cfg_read_flt("general","block_score_radar_staytime",g_fRadarStayTime,g_fRadarStayTime);
 	cfg_read_flt("general","block_score_radar_deadtime",g_fRadarDeadTime,g_fRadarDeadTime);
 	cfg_read_bool("general","block_bad_cmd",g_bBlockBadCmd,g_bBlockBadCmd);
+	cfg_read_bool("general","block_speedhack",g_bBlockSpeedHack,g_bBlockSpeedHack);
+	cfg_read_flt("general","block_speedhack_time",g_fSpeedHackTime,g_fSpeedHackTime);
 	
 	if (g_fRadarStayTime < 0.1)
 		g_fRadarStayTime = 0.1;
@@ -165,6 +174,10 @@ public plugin_init()
 		register_message(g_iScoreAttribMsg, "ScoreAttrib_HOOK");
 	}
 
+	if (g_bBlockSpeedHack)
+	{
+		RegisterHookChain(RG_PM_PlayStepSound, "PM_PlayStepSound_Pre", .post = false);
+	}
 
 	log_amx("AimBlocker [v%s] loaded!", PLUGIN_VERSION);
 	log_amx("Settings: ");
@@ -176,6 +189,44 @@ public plugin_init()
 	log_amx("  block_score_local_dead = %i",g_bBlockScoreLocalDead);
 	log_amx("  block_score_radar_staytime = %f",g_fRadarStayTime);
 	log_amx("  block_score_radar_deadtime = %f",g_fRadarDeadTime);
+	log_amx("  block_speedhack = %i",g_bBlockSpeedHack);
+	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
+
+}
+
+public PM_PlayStepSound_Pre(step, Float:vol, id)
+{
+	if (g_fStepTime[id] == 0.0)
+	{
+		get_entvar(id, var_origin, g_vOldStepOrigin[id]);
+	}
+
+	if (get_gametime() - g_fStepTime[id] < g_fSpeedHackTime && g_fOldStepVol[id] == vol)
+	{
+		if (g_iStepCounter[id] > 2)
+		{
+			static Float:tmpOrig[3];
+			get_entvar(id, var_origin, tmpOrig);
+			set_entvar(id, var_origin, g_vOldStepOrigin[id]);
+			set_entvar(id, var_oldorigin, tmpOrig);
+		}
+		else 
+		{
+			g_iStepCounter[id]++;
+		}
+	}
+	else 
+	{
+		if (g_iStepCounter[id] > 0)
+		{
+			g_iStepCounter[id]--;
+		}
+		else 
+			get_entvar(id, var_origin, g_vOldStepOrigin[id]);
+	}
+
+	g_fOldStepVol[id] = vol;
+	g_fStepTime[id] = get_gametime();
 }
 
 public clear_client(id)
@@ -183,12 +234,16 @@ public clear_client(id)
 	g_bCurScore[id] = g_bWaitForBuyZone[id] = false;
 	g_vAngles1[id][0] = g_vAngles1[id][1] = g_vAngles1[id][2] = 0.0;
 	g_vAngles2[id][0] = g_vAngles2[id][1] = g_vAngles2[id][2] = 0.0;
+	g_vOldStepOrigin[id][0] = g_vOldStepOrigin[id][1] = g_vOldStepOrigin[id][2] = 0.0;
 	g_iButtons[id] = /*g_iButtons_old[id] =*/ 0;
 	g_vCmdCheckTime[id] = 0.0;
 	g_iCmdCounter[id] = 0;
 	g_iCmdMsecCounter[id] = 0;
 	g_iBlockMove[id] = 0;
 	g_bUserBot[id] = false;
+	g_fOldStepVol[id] = 0.0;
+	g_fStepTime[id] = 0.0;
+	g_iStepCounter[id] = 0;
 }
 
 public client_disconnected(id)
@@ -268,6 +323,11 @@ public PM_Move_Pre(const id)
 		{
 			new cmd = get_pmove(pm_cmd);
 			set_ucmd(cmd,ucmd_buttons, get_entvar(id, var_button));
+		}
+
+		if (g_iStepCounter[id] > 2)
+		{
+			set_pmove(pm_origin, g_vOldStepOrigin[id]);
 		}
 
 		if (g_bBlockBadCmd)
