@@ -6,6 +6,7 @@
 #include <cssdk_const>
 #include <xs>
 
+
 #pragma ctrlchar '\'
 
 new const DEFAULT_BLOCKWEAPON_LIST[][] = { "weapon_p228", "weapon_xm1014", "weapon_c4", "weapon_mac10", "weapon_elite", "weapon_fiveseven",
@@ -26,6 +27,7 @@ new g_iCmdCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iCmdMsecCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iBlockMove[MAX_PLAYERS + 1] = {0, ...};
 new g_iStepCounter[MAX_PLAYERS + 1] = {0, ...};
+new g_iLastItem[MAX_PLAYERS + 1] = {0, ...};
 
 new bool:g_bBlockScoreAttr = true;
 new bool:g_bBlockScoreAttrAttack = false;
@@ -53,7 +55,7 @@ new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
 
 
-new const PLUGIN_VERSION[] = "2.9";
+new const PLUGIN_VERSION[] = "2.10";
 
 public plugin_init()
 {
@@ -94,6 +96,31 @@ public plugin_init()
 	cfg_read_bool("general","block_bad_cmd",g_bBlockBadCmd,g_bBlockBadCmd);
 	cfg_read_bool("general","block_speedhack",g_bBlockSpeedHack,g_bBlockSpeedHack);
 	cfg_read_flt("general","block_speedhack_time",g_fSpeedHackTime,g_fSpeedHackTime);
+
+	// next block code for check readwrite access to cfg
+	new bool:test_read_write_cfg = !g_bBlockBadCmd;
+
+	cfg_write_bool("general","block_bad_cmd", test_read_write_cfg);
+	cfg_read_bool("general","block_bad_cmd", test_read_write_cfg, test_read_write_cfg);
+	cfg_write_bool("general","block_bad_cmd", g_bBlockBadCmd);
+
+	if (test_read_write_cfg == g_bBlockBadCmd)
+	{
+		log_error(AMX_ERR_MEMACCESS, "Can't read/write cfg. Please reinstall server with needed access.");
+		set_fail_state("Can't read/write cfg. Please reinstall server with needed access.");
+		return;
+	}
+
+	if (g_fSpeedHackTime < 0.1)
+	{
+		g_fSpeedHackTime = 0.1;
+		cfg_write_flt("general","block_speedhack_time",g_fSpeedHackTime);
+	}
+	if (g_fSpeedHackTime > 0.29)
+	{
+		g_fSpeedHackTime = 0.29;
+		cfg_write_flt("general","block_speedhack_time",g_fSpeedHackTime);
+	}
 	
 	if (g_fRadarStayTime < 0.1)
 		g_fRadarStayTime = 0.1;
@@ -191,7 +218,6 @@ public plugin_init()
 	log_amx("  block_score_radar_deadtime = %f",g_fRadarDeadTime);
 	log_amx("  block_speedhack = %i",g_bBlockSpeedHack);
 	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
-
 }
 
 public PM_PlayStepSound_Pre(step, Float:vol, id)
@@ -205,18 +231,18 @@ public PM_PlayStepSound_Pre(step, Float:vol, id)
 	{
 		if (g_iStepCounter[id] > 2)
 		{
-			static Float:tmpOrig[3];
-			get_entvar(id, var_origin, tmpOrig);
+			//log_amx("[%i] SpeedHack detected [%f] = %f!", id, get_gametime() - g_fStepTime[id],vol);
 			set_entvar(id, var_origin, g_vOldStepOrigin[id]);
-			set_entvar(id, var_oldorigin, tmpOrig);
 		}
 		else 
 		{
+			//log_amx("[%i] SpeedHack warn [%f] = %f!", id,get_gametime() - g_fStepTime[id],vol);
 			g_iStepCounter[id]++;
 		}
 	}
 	else 
 	{
+		//log_amx("[%i] SpeedHack clear [%f] = %f!", id,get_gametime() - g_fStepTime[id],vol);
 		if (g_iStepCounter[id] > 0)
 		{
 			g_iStepCounter[id]--;
@@ -244,6 +270,7 @@ public clear_client(id)
 	g_fOldStepVol[id] = 0.0;
 	g_fStepTime[id] = 0.0;
 	g_iStepCounter[id] = 0;
+	g_iLastItem[id] = 0;
 }
 
 public client_disconnected(id)
@@ -334,22 +361,33 @@ public PM_Move_Pre(const id)
 		{
 			if (g_iBlockMove[id] > 0)
 			{
+				new Float:mult = 1.0 + (g_iBlockMove[id] / 10.0);
+
 				get_pmove(pm_velocity, vTmpAngles);
-				vTmpAngles[0] /= 1.2;
-				vTmpAngles[1] /= 1.2;
+				vTmpAngles[0] /= mult;
+				vTmpAngles[1] /= mult;
 				set_pmove(pm_velocity, vTmpAngles);
 
-				if (g_iBlockMove[id] > 1)
-				{
-					get_entvar(id, var_velocity, vTmpAngles);
-					vTmpAngles[0] /= 2.0;
-					vTmpAngles[1] /= 2.0;
-					set_entvar(id, var_velocity, vTmpAngles);
-				}
+				get_entvar(id, var_velocity, vTmpAngles);
+				vTmpAngles[0] /= mult;
+				vTmpAngles[1] /= mult;
+				set_entvar(id, var_velocity, vTmpAngles);
 			}
 		}
 	}
 }
+
+public force_drop_client_bad_fps(id)
+{
+	if (is_user_connected(id))
+	{
+		clear_client(id);
+		rh_drop_client(id, "BAD FPS");
+	}
+}
+
+// Set it to true for use unreliable messages (check sv_minrate if you see all 'dead' more than 100 msec)
+new const bool:USE_UNRELIABLE = false;
 
 public FM_CmdStart_Pre(id, handle)
 {
@@ -362,13 +400,15 @@ public FM_CmdStart_Pre(id, handle)
 		{
 			new iMsec = get_uc(handle, UC_Msec);
 			new Float:fMaxMov = get_entvar(id,var_maxspeed);
+			new iWeapon = get_member(id, m_pActiveItem);
 
 			if (iMsec < 1)
 			{
-				set_task(0.01,"force_drop_client_bad_fps",id);
+				if (!task_exists(id))
+					set_task(0.01,"force_drop_client_bad_fps",id);
 				return FMRES_SUPERCEDE;
 			}
-			else if (fMaxMov > 0.0 && is_user_alive(id))
+			else if (fMaxMov > 0.0 && fMaxMov <= 400.0 && is_user_alive(id))
 			{
 				new Float:fForward = 0.0;
 				get_uc(handle, UC_ForwardMove, fForward);
@@ -382,30 +422,27 @@ public FM_CmdStart_Pre(id, handle)
 					new Float:fmov = xs_sqrt((fForward * fForward) + (fSide * fSide) + (fUp * fUp));
 					new Float:fmov2 = fmov / g_vCL_movespeedkey[id];
 
+					//log_amx("[%i] fmov = %f, fmov2 = %f, fMaxMov1 = %f", id, fmov,fmov2,fMaxMov);
+
 					if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT == 0 && fSide != 0.0)
 					{
 						g_iBlockMove[id]++;
-						//log_amx("[%i] bad cmd1 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
 					}
 					else if (btn & IN_FORWARD == 0 && btn & IN_BACK == 0 && fForward != 0.0)
 					{
 						g_iBlockMove[id]++;
-						//log_amx("[%i] bad cmd2 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
 					}
 					else if (btn & IN_MOVERIGHT != 0 && btn & IN_MOVELEFT == 0 && fSide < -1.0)
 					{
 						g_iBlockMove[id]++;
-						//log_amx("[%i] bad cmd3 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
 					}
 					else if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT != 0 && fSide > 1.0)
 					{
 						g_iBlockMove[id]++;
-						//log_amx("[%i] bad cmd4 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
 					}
 					else if (btn & IN_FORWARD != 0 && btn & IN_BACK == 0 && fForward < -1.0)
 					{
 						g_iBlockMove[id]++;
-						//log_amx("[%i] bad cmd5 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
 					}
 					else if (floatabs(fmov - fMaxMov) > 5.0 && floatabs(fmov2 - fMaxMov) > 5.0)
 					{
@@ -416,23 +453,19 @@ public FM_CmdStart_Pre(id, handle)
 							if (floatabs(fmov3 - fMaxMov) > 5.0 && floatabs(fmov4 - fMaxMov) > 5.0)
 							{
 								g_iBlockMove[id]++;
-								//log_amx("[%i] bad fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
 							}
 							else 
 							{
-								//log_amx("[%i] good2 fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
 								g_iBlockMove[id] = 0;
 							}
 						}
 						else 
 						{
 							g_iBlockMove[id]++;
-							//log_amx("[%i] bad fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
 						}
 					}
 					else 
 					{
-						//log_amx("[%i] good fmov = %.2f, fmov2 = %.2f, fMaxMov = %.2f [%.2f %.2f %.2f]", id,fmov,fmov2,fMaxMov, fForward, fSide, fUp);
 						g_iBlockMove[id] = 0;
 					}
 				}
@@ -440,6 +473,17 @@ public FM_CmdStart_Pre(id, handle)
 				{
 					g_iBlockMove[id] = 0;
 				}
+			}
+			else 
+			{
+				g_iBlockMove[id] = 0;
+			}
+
+			if (iWeapon != g_iLastItem[id])
+			{
+				if (g_iBlockMove[id] > 0)
+					g_iBlockMove[id]--;
+				g_iLastItem[id] = iWeapon;
 			}
 		}
 
@@ -467,7 +511,8 @@ public FM_CmdStart_Pre(id, handle)
 						g_bWaitForBuyZone[id] = false;
 						
 						// force update scoreboard 
-						message_begin(MSG_ONE_UNRELIABLE, g_iScoreInfoMsg, _,id);
+						
+						message_begin(USE_UNRELIABLE ? MSG_ONE_UNRELIABLE : MSG_ONE, g_iScoreInfoMsg, _,id);
 						write_byte(33); // is safe!
 						write_short(0);
 						write_short(0);
@@ -545,7 +590,7 @@ public FM_CmdStart_Pre(id, handle)
 
 					
 					// force update scoreboard 
-					message_begin(MSG_ONE_UNRELIABLE, g_iScoreInfoMsg, _,id);
+					message_begin(USE_UNRELIABLE ? MSG_ONE_UNRELIABLE : MSG_ONE, g_iScoreInfoMsg, _,id);
 					write_byte(33); // is safe!
 					write_short(0);
 					write_short(0);
@@ -567,7 +612,7 @@ public FM_CmdStart_Pre(id, handle)
 					}
 
 					// force update scoreboard 
-					message_begin(MSG_ONE_UNRELIABLE, g_iScoreInfoMsg, _,id);
+					message_begin(USE_UNRELIABLE ? MSG_ONE_UNRELIABLE : MSG_ONE, g_iScoreInfoMsg, _,id);
 					write_byte(33); // is safe!
 					write_short(0);
 					write_short(0);
@@ -731,13 +776,4 @@ stock bool:rg_get_user_buyzone(const pClient) {
     get_member(pClient, m_signals, iSignals);
 
     return bool:(SignalState:iSignals[US_State] & SIGNAL_BUY);
-}
-
-stock force_drop_client_bad_fps(id)
-{
-	if (is_user_connected(id))
-	{
-		clear_client(id);
-		rh_drop_client(id, "BAD FPS");
-	}
 }
