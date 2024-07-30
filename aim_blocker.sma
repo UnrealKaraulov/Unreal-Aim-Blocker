@@ -35,6 +35,7 @@ new bool:g_bBlockScoreLocalDead = false;
 new bool:g_bShowDef = false;
 new bool:g_bBlockBadCmd = false;
 new bool:g_bBlockSpeedHack = false;
+new bool:g_bBlockBackTrack = false;
 
 new bool:g_bCurScore[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bWaitForBuyZone[MAX_PLAYERS + 1] = {false, ...};
@@ -55,7 +56,7 @@ new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
 
 
-new const PLUGIN_VERSION[] = "2.10";
+new const PLUGIN_VERSION[] = "2.11";
 
 public plugin_init()
 {
@@ -96,6 +97,7 @@ public plugin_init()
 	cfg_read_bool("general","block_bad_cmd",g_bBlockBadCmd,g_bBlockBadCmd);
 	cfg_read_bool("general","block_speedhack",g_bBlockSpeedHack,g_bBlockSpeedHack);
 	cfg_read_flt("general","block_speedhack_time",g_fSpeedHackTime,g_fSpeedHackTime);
+	cfg_read_bool("general","block_backtrack",g_bBlockBackTrack,g_bBlockBackTrack);
 
 	// next block code for check readwrite access to cfg
 	new bool:test_read_write_cfg = !g_bBlockBadCmd;
@@ -166,12 +168,16 @@ public plugin_init()
 		RegisterHookChain(RG_PM_Move, "PM_Move_Post", .post = true);
 	}
 
-	if (g_iAimBlockMethod == 2 || g_bBlockBadCmd)
+	if (g_iAimBlockMethod == 2 || g_bBlockBadCmd || g_bBlockSpeedHack)
 	{
 		RegisterHookChain(RG_PM_Move, "PM_Move_Pre", .post = false);
 	}
 	
-	register_forward(FM_CmdStart, "FM_CmdStart_Pre", false);
+	if (g_bBlockBadCmd || g_bBlockScoreAttr || g_iAimBlockMethod == 1)
+	{
+		register_forward(FM_CmdStart, "FM_CmdStart_Pre", ._post = false);
+	}
+
 	if (g_iAimBlockMethod == 1)
 	{	
 		cfg_set_path("reaimdetector");
@@ -218,7 +224,24 @@ public plugin_init()
 	log_amx("  block_score_radar_deadtime = %f",g_fRadarDeadTime);
 	log_amx("  block_speedhack = %i",g_bBlockSpeedHack);
 	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
+	}
 }
+
+public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet) 
+{
+	if(!player || host > MaxClients || ent > MaxClients)
+		return;
+
+	static Float:animtime = 0.0;
+	get_es(es_handle, ES_AnimTime, animtime);
+
+	if (animtime != 0.0)
+	{
+		set_es(es_handle, ES_AnimTime, animtime + get_gametime());
+	}
+}
+
+
 
 public PM_PlayStepSound_Pre(step, Float:vol, id)
 {
@@ -394,8 +417,6 @@ public FM_CmdStart_Pre(id, handle)
 	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
 	{	
 		new btn = get_uc(handle, UC_Buttons);
-		new bool:bHandled = false;
-
 		if (g_bBlockBadCmd)
 		{
 			new iMsec = get_uc(handle, UC_Msec);
@@ -629,15 +650,9 @@ public FM_CmdStart_Pre(id, handle)
 			set_entvar(id, var_oldbuttons, g_iButtons_old[id]);
 			g_iButtons_old[id] = tmpbutton;*/
 			set_uc(handle, UC_Buttons, g_iButtons[id]);
-			bHandled = true;
 		}
 		
 		g_iButtons[id] = btn;
-
-		if (bHandled)
-		{
-			return FMRES_HANDLED;
-		}
 	}
 	return FMRES_IGNORED;
 }
@@ -739,32 +754,45 @@ stock UpdateUserScoreForPlayer(id, iPlayer)
 	{
 		iState |= SCORE_STATUS_DEAD;
 	}
-	
-	if (get_member(iPlayer,m_bHasC4))
+	else 
 	{
-		iState |= SCORE_STATUS_BOMB;
-	}
+		if (get_member(iPlayer,m_bHasC4))
+		{
+			iState |= SCORE_STATUS_BOMB;
+		}
 
-	if (get_member(iPlayer,m_bIsVIP))
-	{
-		iState |= SCORE_STATUS_VIP;
-	}
-	
-	if (g_bShowDef && get_member(iPlayer,m_bHasDefuser))
-	{
-		iState |= SCORE_STATUS_DEFKIT;
-	}
+		if (get_member(iPlayer,m_bIsVIP))
+		{
+			iState |= SCORE_STATUS_VIP;
+		}
+		
+		if (g_bShowDef && get_member(iPlayer,m_bHasDefuser))
+		{
+			iState |= SCORE_STATUS_DEFKIT;
+		}
 
-	if (iState & (SCORE_STATUS_BOMB | SCORE_STATUS_DEFKIT) && GetForceCamera() != CAMERA_MODE_SPEC_ANYONE)
-	{
-#if REAPI_VERSION > 524300
-		if (rg_player_relationship(id, iPlayer) != GR_TEAMMATE)
-#else
-		if (get_member(iPlayer, m_iTeam) != get_member(id, m_iTeam))
-#endif
-			iState &= ~(SCORE_STATUS_BOMB | SCORE_STATUS_DEFKIT);
-	}
+		if (iState & (SCORE_STATUS_BOMB | SCORE_STATUS_DEFKIT) && GetForceCamera() != CAMERA_MODE_SPEC_ANYONE)
+		{
+			new bool:bIsNotTeam = false;
+	#if REAPI_VERSION > 524300
+			bIsNotTeam = rg_player_relationship(id, iPlayer) != GR_TEAMMATE;
+	#else
+			bIsNotTeam = get_member(iPlayer, m_iTeam) != get_member(id, m_iTeam);
+	#endif
+			if (bIsNotTeam)
+			{
+				if (iState & SCORE_STATUS_BOMB)
+				{
+					iState -= SCORE_STATUS_BOMB;
+				}
 
+				if (iState & SCORE_STATUS_DEFKIT)
+				{
+					iState -= SCORE_STATUS_DEFKIT;
+				}
+			}
+		}
+	}
 	message_begin(MSG_ONE, g_iScoreAttribMsg, _,id);
 	write_byte(iPlayer);
 	write_byte(iState);
