@@ -224,6 +224,11 @@ public plugin_init()
 	log_amx("  block_score_radar_deadtime = %f",g_fRadarDeadTime);
 	log_amx("  block_speedhack = %i",g_bBlockSpeedHack);
 	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
+	log_amx("  block_backtrack = %i",g_bBlockBackTrack);
+	
+	if (g_bBlockBackTrack)
+	{
+		register_forward(FM_AddToFullPack, "AddToFullPack_Post", ._post = true);
 	}
 }
 
