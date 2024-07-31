@@ -27,7 +27,6 @@ new g_iCmdCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iCmdMsecCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iBlockMove[MAX_PLAYERS + 1] = {0, ...};
 new g_iStepCounter[MAX_PLAYERS + 1] = {0, ...};
-new g_iLastItem[MAX_PLAYERS + 1] = {0, ...};
 
 new bool:g_bBlockScoreAttr = true;
 new bool:g_bBlockScoreAttrAttack = false;
@@ -41,13 +40,17 @@ new bool:g_bCurScore[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bWaitForBuyZone[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bRadarFix[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bUserBot[MAX_PLAYERS + 1] = {false, ...};
+new bool:g_bWeaponChanged[MAX_PLAYERS + 1] = {false, ...};
 
 new Float:g_fOldStepVol[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fStepTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_fWeaponSendTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fRadarStayTime = 0.45;
 new Float:g_fRadarDeadTime = 0.05;
 new Float:g_fSpeedHackTime = 0.30;
+
+new g_sClientWeaponCmd[MAX_PLAYERS + 1][64];
 
 new Float:g_vAngles1[MAX_PLAYERS + 1][3];
 new Float:g_vAngles2[MAX_PLAYERS + 1][3];
@@ -56,7 +59,7 @@ new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
 
 
-new const PLUGIN_VERSION[] = "2.11";
+new const PLUGIN_VERSION[] = "2.12";
 
 public plugin_init()
 {
@@ -178,6 +181,11 @@ public plugin_init()
 		register_forward(FM_CmdStart, "FM_CmdStart_Pre", ._post = false);
 	}
 
+	if (g_bBlockBadCmd)
+	{
+		register_forward(FM_ClientCommand, "FM_ClientCommand_Pre", ._post = false);
+	}
+
 	if (g_iAimBlockMethod == 1)
 	{	
 		cfg_set_path("reaimdetector");
@@ -246,7 +254,19 @@ public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet)
 	}
 }
 
+public FM_ClientCommand_Pre(id)
+{
+	new scmd[64];
+	read_argv(0, scmd, charsmax(scmd));
+	if (contain(scmd, "weapon_") == 0 || equal(scmd,"lastinv"))
+	{
+		copy(g_sClientWeaponCmd[id], charsmax(g_sClientWeaponCmd[]), scmd);
+		g_fWeaponSendTime[id] = get_gametime() + 0.02;
+		return FMRES_SUPERCEDE;
+	}
 
+	return FMRES_IGNORED;
+}
 
 public PM_PlayStepSound_Pre(step, Float:vol, id)
 {
@@ -295,10 +315,12 @@ public clear_client(id)
 	g_iCmdMsecCounter[id] = 0;
 	g_iBlockMove[id] = 0;
 	g_bUserBot[id] = false;
+	g_bWeaponChanged[id] = false;
 	g_fOldStepVol[id] = 0.0;
 	g_fStepTime[id] = 0.0;
 	g_iStepCounter[id] = 0;
-	g_iLastItem[id] = 0;
+	g_fWeaponSendTime[id] = 0.0;
+	g_sClientWeaponCmd[id][0] = EOS;
 }
 
 public client_disconnected(id)
@@ -401,6 +423,13 @@ public PM_Move_Pre(const id)
 				vTmpAngles[1] /= mult;
 				set_entvar(id, var_velocity, vTmpAngles);
 			}
+
+			if (g_sClientWeaponCmd[id][0] != EOS && get_gametime() > g_fWeaponSendTime[id])
+			{
+				engclient_cmd(id, g_sClientWeaponCmd[id]);
+				g_bWeaponChanged[id] = true;
+				g_sClientWeaponCmd[id][0] = EOS;
+			}
 		}
 	}
 }
@@ -426,7 +455,6 @@ public FM_CmdStart_Pre(id, handle)
 		{
 			new iMsec = get_uc(handle, UC_Msec);
 			new Float:fMaxMov = get_entvar(id,var_maxspeed);
-			new iWeapon = get_member(id, m_pActiveItem);
 
 			if (iMsec < 1)
 			{
@@ -505,11 +533,19 @@ public FM_CmdStart_Pre(id, handle)
 				g_iBlockMove[id] = 0;
 			}
 
-			if (iWeapon != g_iLastItem[id])
+			if (g_bWeaponChanged[id])
 			{
 				if (g_iBlockMove[id] > 0)
+				{
 					g_iBlockMove[id]--;
-				g_iLastItem[id] = iWeapon;
+				}
+
+				if (g_iBlockMove[id] > 0)
+				{
+					g_iBlockMove[id]--;
+				}
+
+				g_bWeaponChanged[id] = false;
 			}
 		}
 
