@@ -244,7 +244,7 @@ public plugin_init()
 	log_amx("  block_score_local_dead = %i",g_bBlockScoreLocalDead);
 	log_amx("  block_score_radar_staytime = %f",g_fRadarStayTime);
 	log_amx("  block_score_radar_deadtime = %f",g_fRadarDeadTime);
-	log_amx("  block_speedhack = %i (not tested)",g_bBlockSpeedHack);
+	log_amx("  block_speedhack = %i (not recommended, use 'hackdetector lite' instead!)",g_bBlockSpeedHack);
 	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
 	log_amx("  block_backtrack = %i (not tested,not recommended)",g_bBlockBackTrack);
 }
