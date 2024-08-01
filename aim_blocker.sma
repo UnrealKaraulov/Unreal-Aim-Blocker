@@ -44,7 +44,7 @@ new bool:g_bWeaponChanged[MAX_PLAYERS + 1] = {false, ...};
 
 new Float:g_fRadarStayTime = 0.45;
 new Float:g_fRadarDeadTime = 0.05;
-new Float:g_fSpeedHackTime = 0.30;
+new Float:g_fSpeedHackTime = 0.20;
 
 #define WPN_CMDS 3
 
@@ -63,7 +63,7 @@ new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
 
 
-new const PLUGIN_VERSION[] = "2.13";
+new const PLUGIN_VERSION[] = "2.14";
 
 public plugin_init()
 {
@@ -125,9 +125,9 @@ public plugin_init()
 		g_fSpeedHackTime = 0.1;
 		cfg_write_flt("general","block_speedhack_time",g_fSpeedHackTime);
 	}
-	if (g_fSpeedHackTime > 0.29)
+	if (g_fSpeedHackTime > 0.20)
 	{
-		g_fSpeedHackTime = 0.29;
+		g_fSpeedHackTime = 0.20;
 		cfg_write_flt("general","block_speedhack_time",g_fSpeedHackTime);
 	}
 	
@@ -449,10 +449,18 @@ public PM_Move_Pre(const id)
 	static Float:vTmpAngles[3];
 	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
 	{	
-		if (g_iAimBlockMethod == 2)
+		if (g_iAimBlockMethod == 2 || g_bBlockSpeedHack)
 		{
 			new cmd = get_pmove(pm_cmd);
-			set_ucmd(cmd,ucmd_buttons, get_entvar(id, var_button));
+			if (g_iAimBlockMethod == 2)
+				set_ucmd(cmd,ucmd_buttons, get_entvar(id, var_button));
+			if (g_bBlockSpeedHack)
+			{
+				if (get_ucmd(cmd, ucmd_buttons) & IN_DUCK)
+				{
+					g_iStepCounter[id] = 0;
+				}
+			}
 		}
 
 		if (g_iStepCounter[id] > 2)
