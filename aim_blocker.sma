@@ -42,15 +42,19 @@ new bool:g_bRadarFix[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bUserBot[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bWeaponChanged[MAX_PLAYERS + 1] = {false, ...};
 
-new Float:g_fOldStepVol[MAX_PLAYERS + 1] = {0.0, ...};
-new Float:g_fStepTime[MAX_PLAYERS + 1] = {0.0, ...};
-new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
-new Float:g_fWeaponSendTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fRadarStayTime = 0.45;
 new Float:g_fRadarDeadTime = 0.05;
 new Float:g_fSpeedHackTime = 0.30;
 
-new g_sClientWeaponCmd[MAX_PLAYERS + 1][64];
+#define WPN_CMDS 3
+
+new Float:g_fOldStepVol[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_fStepTime[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_vWeaponSendTime[MAX_PLAYERS + 1][WPN_CMDS];
+
+
+new g_sClientWeaponCmd[MAX_PLAYERS + 1][WPN_CMDS][64];
 
 new Float:g_vAngles1[MAX_PLAYERS + 1][3];
 new Float:g_vAngles2[MAX_PLAYERS + 1][3];
@@ -59,7 +63,7 @@ new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
 
 
-new const PLUGIN_VERSION[] = "2.12";
+new const PLUGIN_VERSION[] = "2.13";
 
 public plugin_init()
 {
@@ -184,6 +188,11 @@ public plugin_init()
 	if (g_bBlockBadCmd)
 	{
 		register_forward(FM_ClientCommand, "FM_ClientCommand_Pre", ._post = false);
+		RegisterHookChain(RG_CSGameRules_FShouldSwitchWeapon, "RG_FShouldSwitchWeapon_Post", .post = true);
+		RegisterHookChain(RG_CSGameRules_GetNextBestWeapon, "RG_GetNextBestWeapon_Post", .post = true);
+		/*
+		RegisterHookChain(RG_CBasePlayer_DropPlayerItem, "RG_DropPlayerItem_Post", .post = true);
+		*/
 	}
 
 	if (g_iAimBlockMethod == 1)
@@ -220,6 +229,11 @@ public plugin_init()
 		RegisterHookChain(RG_PM_PlayStepSound, "PM_PlayStepSound_Pre", .post = false);
 	}
 
+	if (g_bBlockBackTrack)
+	{
+		register_forward(FM_AddToFullPack, "AddToFullPack_Post", ._post = true);
+	}
+	
 	log_amx("AimBlocker [v%s] loaded!", PLUGIN_VERSION);
 	log_amx("Settings: ");
 	log_amx("  aim_block_method = %i",g_iAimBlockMethod);
@@ -233,11 +247,6 @@ public plugin_init()
 	log_amx("  block_speedhack = %i",g_bBlockSpeedHack);
 	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
 	log_amx("  block_backtrack = %i",g_bBlockBackTrack);
-	
-	if (g_bBlockBackTrack)
-	{
-		register_forward(FM_AddToFullPack, "AddToFullPack_Post", ._post = true);
-	}
 }
 
 public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet) 
@@ -258,15 +267,56 @@ public FM_ClientCommand_Pre(id)
 {
 	new scmd[64];
 	read_argv(0, scmd, charsmax(scmd));
-	if (contain(scmd, "weapon_") == 0 || equal(scmd,"lastinv"))
+	
+	if (contain(scmd, "weapon_") == 0)
 	{
-		copy(g_sClientWeaponCmd[id], charsmax(g_sClientWeaponCmd[]), scmd);
-		g_fWeaponSendTime[id] = get_gametime() + 0.02;
+		copy(g_sClientWeaponCmd[id][0], charsmax(g_sClientWeaponCmd[][]), scmd);
+		g_vWeaponSendTime[id][0] = get_gametime() + 0.022;
 		return FMRES_SUPERCEDE;
 	}
-
+	
+	if (equal(scmd,"lastinv"))
+	{
+		copy(g_sClientWeaponCmd[id][1], charsmax(g_sClientWeaponCmd[][]), scmd);
+		g_vWeaponSendTime[id][1] = get_gametime() + 0.022;
+		return FMRES_SUPERCEDE;
+	}
+	/*
+	if (equal(scmd,"drop"))
+	{
+		copy(g_sClientWeaponCmd[id][2], charsmax(g_sClientWeaponCmd[][]), scmd);
+		g_vWeaponSendTime[id][2] = get_gametime() + 0.022;
+	}
+	*/
 	return FMRES_IGNORED;
 }
+
+public RG_FShouldSwitchWeapon_Post(const id, const weapon)
+{
+	if (GetHookChainReturn(ATYPE_INTEGER) > 0)
+	{
+		g_bWeaponChanged[id] = true;
+	}
+}
+
+public RG_GetNextBestWeapon_Post(const id, const weapon)
+{
+	if (GetHookChainReturn(ATYPE_INTEGER) > 0)
+	{
+		g_bWeaponChanged[id] = true;
+	}
+}
+
+/*
+public RG_DropPlayerItem_Post(const id, const weapon)
+{
+	if (GetHookChainReturn(ATYPE_INTEGER) > 0)
+	{
+		log_amx("%i drop weapon!", id);
+		g_bWeaponChanged[id] = true;
+	}
+}
+*/
 
 public PM_PlayStepSound_Pre(step, Float:vol, id)
 {
@@ -319,8 +369,11 @@ public clear_client(id)
 	g_fOldStepVol[id] = 0.0;
 	g_fStepTime[id] = 0.0;
 	g_iStepCounter[id] = 0;
-	g_fWeaponSendTime[id] = 0.0;
-	g_sClientWeaponCmd[id][0] = EOS;
+	for(new i = 0; i < WPN_CMDS; i++)
+	{
+		g_vWeaponSendTime[id][i] = 0.0;
+		g_sClientWeaponCmd[id][i][0] = EOS;
+	}
 }
 
 public client_disconnected(id)
@@ -423,12 +476,28 @@ public PM_Move_Pre(const id)
 				vTmpAngles[1] /= mult;
 				set_entvar(id, var_velocity, vTmpAngles);
 			}
-
-			if (g_sClientWeaponCmd[id][0] != EOS && get_gametime() > g_fWeaponSendTime[id])
+			
+			for(new zz = 0; zz < WPN_CMDS; zz++)
 			{
-				engclient_cmd(id, g_sClientWeaponCmd[id]);
+				new bestid = -1;
+				new Float:besttime = 9999.0;
+				
+				for(new i = 0; i < WPN_CMDS;i++)
+				{
+					new Float:tmptime = floatabs(get_gametime() - g_vWeaponSendTime[id][i])
+					if (g_sClientWeaponCmd[id][i][0] != EOS && tmptime < besttime)
+					{
+						besttime = tmptime;
+						bestid = i;
+					}
+				}
+				
+				if (bestid == -1)
+					break;
+					
+				engclient_cmd(id, g_sClientWeaponCmd[id][bestid]);
 				g_bWeaponChanged[id] = true;
-				g_sClientWeaponCmd[id][0] = EOS;
+				g_sClientWeaponCmd[id][bestid][0] = EOS;
 			}
 		}
 	}
