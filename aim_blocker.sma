@@ -244,9 +244,9 @@ public plugin_init()
 	log_amx("  block_score_local_dead = %i",g_bBlockScoreLocalDead);
 	log_amx("  block_score_radar_staytime = %f",g_fRadarStayTime);
 	log_amx("  block_score_radar_deadtime = %f",g_fRadarDeadTime);
-	log_amx("  block_speedhack = %i",g_bBlockSpeedHack);
+	log_amx("  block_speedhack = %i (not tested)",g_bBlockSpeedHack);
 	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
-	log_amx("  block_backtrack = %i",g_bBlockBackTrack);
+	log_amx("  block_backtrack = %i (not tested,not recommended)",g_bBlockBackTrack);
 }
 
 public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet) 
