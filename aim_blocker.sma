@@ -34,6 +34,7 @@ new bool:g_bBlockScoreLocalDead = false;
 new bool:g_bShowDef = false;
 new bool:g_bBlockBadCmd = false;
 new bool:g_bBlockSpeedHack = false;
+new bool:g_bBlockSpeedHackDuck = false;
 new bool:g_bBlockBackTrack = false;
 
 new bool:g_bCurScore[MAX_PLAYERS + 1] = {false, ...};
@@ -44,7 +45,7 @@ new bool:g_bWeaponChanged[MAX_PLAYERS + 1] = {false, ...};
 
 new Float:g_fRadarStayTime = 0.45;
 new Float:g_fRadarDeadTime = 0.05;
-new Float:g_fSpeedHackTime = 0.20;
+new Float:g_fSpeedHackTime = 0.25;
 
 #define WPN_CMDS 3
 
@@ -63,7 +64,7 @@ new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
 
 
-new const PLUGIN_VERSION[] = "2.14";
+new const PLUGIN_VERSION[] = "2.15";
 
 public plugin_init()
 {
@@ -103,6 +104,7 @@ public plugin_init()
 	cfg_read_flt("general","block_score_radar_deadtime",g_fRadarDeadTime,g_fRadarDeadTime);
 	cfg_read_bool("general","block_bad_cmd",g_bBlockBadCmd,g_bBlockBadCmd);
 	cfg_read_bool("general","block_speedhack",g_bBlockSpeedHack,g_bBlockSpeedHack);
+	cfg_read_bool("general","block_speedhack_mouseduck",g_bBlockSpeedHackDuck,g_bBlockSpeedHackDuck);
 	cfg_read_flt("general","block_speedhack_time",g_fSpeedHackTime,g_fSpeedHackTime);
 	cfg_read_bool("general","block_backtrack",g_bBlockBackTrack,g_bBlockBackTrack);
 
@@ -125,9 +127,10 @@ public plugin_init()
 		g_fSpeedHackTime = 0.1;
 		cfg_write_flt("general","block_speedhack_time",g_fSpeedHackTime);
 	}
-	if (g_fSpeedHackTime > 0.20)
+
+	if (g_fSpeedHackTime > 0.28)
 	{
-		g_fSpeedHackTime = 0.20;
+		g_fSpeedHackTime = 0.28;
 		cfg_write_flt("general","block_speedhack_time",g_fSpeedHackTime);
 	}
 	
@@ -226,6 +229,7 @@ public plugin_init()
 
 	if (g_bBlockSpeedHack)
 	{
+		RegisterHookChain(RG_CBasePlayer_Spawn, "RG_Player_Spawn_Post", .post = true);
 		RegisterHookChain(RG_PM_PlayStepSound, "PM_PlayStepSound_Pre", .post = false);
 	}
 
@@ -245,22 +249,25 @@ public plugin_init()
 	log_amx("  block_score_radar_staytime = %f",g_fRadarStayTime);
 	log_amx("  block_score_radar_deadtime = %f",g_fRadarDeadTime);
 	log_amx("  block_speedhack = %i (not recommended, use 'hackdetector lite' instead!)",g_bBlockSpeedHack);
+	log_amx("  block_speedhack_mouseduck = %i (also can block +duck mwheelup)",g_bBlockSpeedHack);
 	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
-	log_amx("  block_backtrack = %i (not tested,not recommended)",g_bBlockBackTrack);
+	log_amx("  block_backtrack = %i (not tested)",g_bBlockBackTrack);
 }
 
 public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet) 
 {
 	if(!player || host > MaxClients || ent > MaxClients)
-		return;
+		return FMRES_IGNORED;
 
 	static Float:animtime = 0.0;
 	get_es(es_handle, ES_AnimTime, animtime);
 
 	if (animtime != 0.0)
 	{
-		set_es(es_handle, ES_AnimTime, animtime + get_gametime());
+		set_es(es_handle, ES_AnimTime, animtime - 1.0);
 	}
+	
+	return FMRES_IGNORED;
 }
 
 public FM_ClientCommand_Pre(id)
@@ -297,6 +304,7 @@ public RG_FShouldSwitchWeapon_Post(const id, const weapon)
 	{
 		g_bWeaponChanged[id] = true;
 	}
+	return HC_CONTINUE;
 }
 
 public RG_GetNextBestWeapon_Post(const id, const weapon)
@@ -305,6 +313,7 @@ public RG_GetNextBestWeapon_Post(const id, const weapon)
 	{
 		g_bWeaponChanged[id] = true;
 	}
+	return HC_CONTINUE;
 }
 
 /*
@@ -317,6 +326,14 @@ public RG_DropPlayerItem_Post(const id, const weapon)
 	}
 }
 */
+
+public RG_Player_Spawn_Post(id)
+{
+	get_entvar(id, var_origin, g_vOldStepOrigin[id]);
+	g_fStepTime[id] = 0.0;
+	g_fOldStepVol[id] = 0.0;
+	return HC_CONTINUE;
+}
 
 public PM_PlayStepSound_Pre(step, Float:vol, id)
 {
@@ -344,13 +361,23 @@ public PM_PlayStepSound_Pre(step, Float:vol, id)
 		if (g_iStepCounter[id] > 0)
 		{
 			g_iStepCounter[id]--;
+
+			if (g_iStepCounter[id] == 0)
+			{
+				get_entvar(id, var_origin, g_vOldStepOrigin[id]);
+				g_fStepTime[id] = 0.0;
+				return HC_CONTINUE;
+			}
 		}
 		else 
+		{
 			get_entvar(id, var_origin, g_vOldStepOrigin[id]);
+		}
 	}
 
 	g_fOldStepVol[id] = vol;
 	g_fStepTime[id] = get_gametime();
+	return HC_CONTINUE;
 }
 
 public clear_client(id)
@@ -449,16 +476,17 @@ public PM_Move_Pre(const id)
 	static Float:vTmpAngles[3];
 	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
 	{	
-		if (g_iAimBlockMethod == 2 || g_bBlockSpeedHack)
+		if (g_iAimBlockMethod == 2 || (g_bBlockSpeedHack && !g_bBlockSpeedHackDuck))
 		{
 			new cmd = get_pmove(pm_cmd);
 			if (g_iAimBlockMethod == 2)
 				set_ucmd(cmd,ucmd_buttons, get_entvar(id, var_button));
-			if (g_bBlockSpeedHack)
+			if (g_bBlockSpeedHack && !g_bBlockSpeedHackDuck)
 			{
 				if (get_ucmd(cmd, ucmd_buttons) & IN_DUCK)
 				{
 					g_iStepCounter[id] = 0;
+					g_fOldStepVol[id] = 0.0;
 				}
 			}
 		}
@@ -472,7 +500,7 @@ public PM_Move_Pre(const id)
 		{
 			if (g_iBlockMove[id] > 0)
 			{
-				new Float:mult = 1.0 + (g_iBlockMove[id] / 10.0);
+				new Float:mult = 1.0 + (float(g_iBlockMove[id]) / 15.0);
 
 				get_pmove(pm_velocity, vTmpAngles);
 				vTmpAngles[0] /= mult;
@@ -506,8 +534,20 @@ public PM_Move_Pre(const id)
 				engclient_cmd(id, g_sClientWeaponCmd[id][bestid]);
 				g_bWeaponChanged[id] = true;
 				g_sClientWeaponCmd[id][bestid][0] = EOS;
+				set_task(0.01, "force_reset_maxspeed", id);
 			}
 		}
+	}
+
+	return HC_CONTINUE;
+}
+
+public force_reset_maxspeed(id)
+{
+	if (is_user_connected(id))
+	{
+		rg_reset_maxspeed(id);
+		g_bWeaponChanged[id] = true;
 	}
 }
 
@@ -550,10 +590,8 @@ public FM_CmdStart_Pre(id, handle)
 
 				if ( fForward != 0.0 || fSide != 0.0 || fUp != 0.0 )
 				{
-					new Float:fmov = xs_sqrt((fForward * fForward) + (fSide * fSide) + (fUp * fUp));
+					new Float:fmov = xs_sqrt(fForward * fForward + fSide * fSide + fUp * fUp);
 					new Float:fmov2 = fmov / g_vCL_movespeedkey[id];
-
-					//log_amx("[%i] fmov = %f, fmov2 = %f, fMaxMov1 = %f", id, fmov,fmov2,fMaxMov);
 
 					if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT == 0 && fSide != 0.0)
 					{
@@ -599,6 +637,8 @@ public FM_CmdStart_Pre(id, handle)
 					{
 						g_iBlockMove[id] = 0;
 					}
+
+					//log_amx("[%i] [warn:%i] m1 = %.2f, m2 = %.2f, max = %.2f, side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], fmov,fmov2,fMaxMov,fSide,fForward,fUp);
 				}
 				else 
 				{
@@ -624,6 +664,9 @@ public FM_CmdStart_Pre(id, handle)
 
 				g_bWeaponChanged[id] = false;
 			}
+			
+			/*if (g_iBlockMove[id] > 0)
+				log_amx("[%i] [warn:%i]", id, g_iBlockMove[id]);*/
 		}
 
 		if (g_bBlockScoreAttr)
