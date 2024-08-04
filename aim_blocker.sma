@@ -41,7 +41,6 @@ new bool:g_bCurScore[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bWaitForBuyZone[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bRadarFix[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bUserBot[MAX_PLAYERS + 1] = {false, ...};
-new bool:g_bWeaponChanged[MAX_PLAYERS + 1] = {false, ...};
 
 new Float:g_fRadarStayTime = 0.45;
 new Float:g_fRadarDeadTime = 0.05;
@@ -52,10 +51,9 @@ new Float:g_fSpeedHackTime = 0.25;
 new Float:g_fOldStepVol[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fStepTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
-new Float:g_vWeaponSendTime[MAX_PLAYERS + 1][WPN_CMDS];
-
-
-new g_sClientWeaponCmd[MAX_PLAYERS + 1][WPN_CMDS][64];
+new Float:g_fMaxSpeed[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_fMaxSpeedOld[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_fMaxSpeedOldOld[MAX_PLAYERS + 1] = {0.0, ...};
 
 new Float:g_vAngles1[MAX_PLAYERS + 1][3];
 new Float:g_vAngles2[MAX_PLAYERS + 1][3];
@@ -64,7 +62,7 @@ new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
 
 
-new const PLUGIN_VERSION[] = "2.15";
+new const PLUGIN_VERSION[] = "2.16";
 
 public plugin_init()
 {
@@ -190,12 +188,7 @@ public plugin_init()
 
 	if (g_bBlockBadCmd)
 	{
-		register_forward(FM_ClientCommand, "FM_ClientCommand_Pre", ._post = false);
-		RegisterHookChain(RG_CSGameRules_FShouldSwitchWeapon, "RG_FShouldSwitchWeapon_Post", .post = true);
-		RegisterHookChain(RG_CSGameRules_GetNextBestWeapon, "RG_GetNextBestWeapon_Post", .post = true);
-		/*
-		RegisterHookChain(RG_CBasePlayer_DropPlayerItem, "RG_DropPlayerItem_Post", .post = true);
-		*/
+		register_forward(FM_UpdateClientData, "FM_UpdateClientData_Post", ._post = true);
 	}
 
 	if (g_iAimBlockMethod == 1)
@@ -270,63 +263,6 @@ public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet)
 	return FMRES_IGNORED;
 }
 
-public FM_ClientCommand_Pre(id)
-{
-	new scmd[64];
-	read_argv(0, scmd, charsmax(scmd));
-	
-	if (contain(scmd, "weapon_") == 0)
-	{
-		copy(g_sClientWeaponCmd[id][0], charsmax(g_sClientWeaponCmd[][]), scmd);
-		g_vWeaponSendTime[id][0] = get_gametime() + 0.022;
-		return FMRES_SUPERCEDE;
-	}
-	
-	if (equal(scmd,"lastinv"))
-	{
-		copy(g_sClientWeaponCmd[id][1], charsmax(g_sClientWeaponCmd[][]), scmd);
-		g_vWeaponSendTime[id][1] = get_gametime() + 0.022;
-		return FMRES_SUPERCEDE;
-	}
-	/*
-	if (equal(scmd,"drop"))
-	{
-		copy(g_sClientWeaponCmd[id][2], charsmax(g_sClientWeaponCmd[][]), scmd);
-		g_vWeaponSendTime[id][2] = get_gametime() + 0.022;
-	}
-	*/
-	return FMRES_IGNORED;
-}
-
-public RG_FShouldSwitchWeapon_Post(const id, const weapon)
-{
-	if (GetHookChainReturn(ATYPE_INTEGER) > 0)
-	{
-		g_bWeaponChanged[id] = true;
-	}
-	return HC_CONTINUE;
-}
-
-public RG_GetNextBestWeapon_Post(const id, const weapon)
-{
-	if (GetHookChainReturn(ATYPE_INTEGER) > 0)
-	{
-		g_bWeaponChanged[id] = true;
-	}
-	return HC_CONTINUE;
-}
-
-/*
-public RG_DropPlayerItem_Post(const id, const weapon)
-{
-	if (GetHookChainReturn(ATYPE_INTEGER) > 0)
-	{
-		log_amx("%i drop weapon!", id);
-		g_bWeaponChanged[id] = true;
-	}
-}
-*/
-
 public RG_Player_Spawn_Post(id)
 {
 	get_entvar(id, var_origin, g_vOldStepOrigin[id]);
@@ -392,15 +328,13 @@ public clear_client(id)
 	g_iCmdMsecCounter[id] = 0;
 	g_iBlockMove[id] = 0;
 	g_bUserBot[id] = false;
-	g_bWeaponChanged[id] = false;
 	g_fOldStepVol[id] = 0.0;
 	g_fStepTime[id] = 0.0;
 	g_iStepCounter[id] = 0;
-	for(new i = 0; i < WPN_CMDS; i++)
-	{
-		g_vWeaponSendTime[id][i] = 0.0;
-		g_sClientWeaponCmd[id][i][0] = EOS;
-	}
+	g_fMaxSpeed[id] = 0.0;
+	g_fMaxSpeedOld[id] = 0.0;
+	g_fMaxSpeedOldOld[id] = 0.0;
+	g_fRadarUpdateTime[id] = 0.0;
 }
 
 public client_disconnected(id)
@@ -512,43 +446,10 @@ public PM_Move_Pre(const id)
 				vTmpAngles[1] /= mult;
 				set_entvar(id, var_velocity, vTmpAngles);
 			}
-			
-			for(new zz = 0; zz < WPN_CMDS; zz++)
-			{
-				new bestid = -1;
-				new Float:besttime = 9999.0;
-				
-				for(new i = 0; i < WPN_CMDS;i++)
-				{
-					new Float:tmptime = floatabs(get_gametime() - g_vWeaponSendTime[id][i])
-					if (g_sClientWeaponCmd[id][i][0] != EOS && tmptime < besttime)
-					{
-						besttime = tmptime;
-						bestid = i;
-					}
-				}
-				
-				if (bestid == -1)
-					break;
-					
-				engclient_cmd(id, g_sClientWeaponCmd[id][bestid]);
-				g_bWeaponChanged[id] = true;
-				g_sClientWeaponCmd[id][bestid][0] = EOS;
-				set_task(0.01, "force_reset_maxspeed", id);
-			}
 		}
 	}
 
 	return HC_CONTINUE;
-}
-
-public force_reset_maxspeed(id)
-{
-	if (is_user_connected(id))
-	{
-		rg_reset_maxspeed(id);
-		g_bWeaponChanged[id] = true;
-	}
 }
 
 public force_drop_client_bad_fps(id)
@@ -562,6 +463,7 @@ public force_drop_client_bad_fps(id)
 
 // Set it to true for use unreliable messages (check sv_minrate if you see all 'dead' more than 100 msec)
 new const bool:USE_UNRELIABLE = false;
+new Float:MAGIC_SPEED = 200.0;
 
 public FM_CmdStart_Pre(id, handle)
 {
@@ -571,15 +473,18 @@ public FM_CmdStart_Pre(id, handle)
 		if (g_bBlockBadCmd)
 		{
 			new iMsec = get_uc(handle, UC_Msec);
-			new Float:fMaxMov = get_entvar(id,var_maxspeed);
-
+			
+			new Float:fMaxMov = g_fMaxSpeed[id];
+			new Float:fMaxMov2 = g_fMaxSpeedOld[id];
+			new Float:fMaxMov3 = g_fMaxSpeedOldOld[id];
+			
 			if (iMsec < 1)
 			{
 				if (!task_exists(id))
 					set_task(0.01,"force_drop_client_bad_fps",id);
 				return FMRES_SUPERCEDE;
 			}
-			else if (fMaxMov > 0.0 && fMaxMov <= 400.0 && is_user_alive(id))
+			else if (fMaxMov > 0.0 && fMaxMov <= 400.0 && is_user_alive(id) && fMaxMov2 <= 400.0)
 			{
 				new Float:fForward = 0.0;
 				get_uc(handle, UC_ForwardMove, fForward);
@@ -613,13 +518,18 @@ public FM_CmdStart_Pre(id, handle)
 					{
 						g_iBlockMove[id]++;
 					}
-					else if (floatabs(fmov - fMaxMov) > 5.0 && floatabs(fmov2 - fMaxMov) > 5.0)
+					else if (floatabs(fmov - fMaxMov) > 5.0 && floatabs(fmov2 - fMaxMov) > 5.0 &&
+							floatabs(fmov - fMaxMov2) > 5.0 && floatabs(fmov2 - fMaxMov2) > 5.0 &&
+							floatabs(fmov - fMaxMov3) > 5.0 && floatabs(fmov2 - fMaxMov3) > 5.0 &&
+							floatabs(fmov - MAGIC_SPEED) > 1.0 && floatabs(fmov2 - MAGIC_SPEED) > 1.0)
 					{
 						if (g_iBlockMove[id] == 0)
 						{
 							new Float:fmov3 = fmov * 1.25;
 							new Float:fmov4 = fmov2 * 1.25;
-							if (floatabs(fmov3 - fMaxMov) > 5.0 && floatabs(fmov4 - fMaxMov) > 5.0)
+							if (floatabs(fmov3 - fMaxMov) > 5.0 && floatabs(fmov4 - fMaxMov) > 5.0 
+								&& floatabs(fmov3 - fMaxMov2) > 5.0 && floatabs(fmov4 - fMaxMov2) > 5.0
+								&& floatabs(fmov3 - fMaxMov3) > 5.0 && floatabs(fmov4 - fMaxMov3) > 5.0)
 							{
 								g_iBlockMove[id]++;
 							}
@@ -638,7 +548,7 @@ public FM_CmdStart_Pre(id, handle)
 						g_iBlockMove[id] = 0;
 					}
 
-					//log_amx("[%i] [warn:%i] m1 = %.2f, m2 = %.2f, max = %.2f, side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], fmov,fmov2,fMaxMov,fSide,fForward,fUp);
+					//log_amx("[%i] [warn:%i] m1 = %.2f, m2 = %.2f, max1 = %.2f, max2 = %.2f, side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], fmov,fmov2,fMaxMov,fMaxMov2,fSide,fForward,fUp);
 				}
 				else 
 				{
@@ -648,21 +558,6 @@ public FM_CmdStart_Pre(id, handle)
 			else 
 			{
 				g_iBlockMove[id] = 0;
-			}
-
-			if (g_bWeaponChanged[id])
-			{
-				if (g_iBlockMove[id] > 0)
-				{
-					g_iBlockMove[id]--;
-				}
-
-				if (g_iBlockMove[id] > 0)
-				{
-					g_iBlockMove[id]--;
-				}
-
-				g_bWeaponChanged[id] = false;
 			}
 			
 			/*if (g_iBlockMove[id] > 0)
@@ -815,6 +710,20 @@ public FM_CmdStart_Pre(id, handle)
 		
 		g_iButtons[id] = btn;
 	}
+	return FMRES_IGNORED;
+}
+
+public FM_UpdateClientData_Post(id, weapons, cd)
+{
+	if (id <= 0 || id > MaxClients) 
+	{
+		return FMRES_IGNORED;
+	}
+
+	g_fMaxSpeedOldOld[id] = g_fMaxSpeedOld[id];
+	g_fMaxSpeedOld[id] = g_fMaxSpeed[id];
+	get_cd(cd, CD_MaxSpeed, g_fMaxSpeed[id]);
+	
 	return FMRES_IGNORED;
 }
 
