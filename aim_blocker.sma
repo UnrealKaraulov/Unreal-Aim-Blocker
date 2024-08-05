@@ -2,9 +2,11 @@
 #include <reapi>
 #include <hamsandwich>
 #include <fakemeta>
-#include <easy_cfg>
 #include <cssdk_const>
 #include <xs>
+
+#define _easy_cfg_internal
+#include <easy_cfg>
 
 
 #pragma ctrlchar '\'
