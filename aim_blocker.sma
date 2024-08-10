@@ -8,6 +8,7 @@
 #define _easy_cfg_internal
 #include <easy_cfg>
 
+new const PLUGIN_VERSION[] = "2.17";
 
 #pragma ctrlchar '\'
 
@@ -22,6 +23,8 @@ new g_iScoreInfoMsg = 0;
 new g_iForcechasecam = 0;
 new g_iForcecamera = 0;
 new g_iFadetoblack = 0;
+new g_iVipFlags = -2;
+new g_iBlockScoreSendDelay = 0;
 
 new g_iButtons[MAX_PLAYERS + 1] = {0, ...};
 //new g_iButtons_old[MAX_PLAYERS + 1] = {0, ...};
@@ -29,6 +32,7 @@ new g_iCmdCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iCmdMsecCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iBlockMove[MAX_PLAYERS + 1] = {0, ...};
 new g_iStepCounter[MAX_PLAYERS + 1] = {0, ...};
+new g_iScoreSendCounter[MAX_PLAYERS + 1] = {0, ...};
 
 new bool:g_bBlockScoreAttr = true;
 new bool:g_bBlockScoreAttrAttack = false;
@@ -48,8 +52,6 @@ new Float:g_fRadarStayTime = 0.45;
 new Float:g_fRadarDeadTime = 0.05;
 new Float:g_fSpeedHackTime = 0.25;
 
-#define WPN_CMDS 3
-
 new Float:g_fOldStepVol[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fStepTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
@@ -59,12 +61,8 @@ new Float:g_fMaxSpeedOldOld[MAX_PLAYERS + 1] = {0.0, ...};
 
 new Float:g_vAngles1[MAX_PLAYERS + 1][3];
 new Float:g_vAngles2[MAX_PLAYERS + 1][3];
-new Float:g_vCmdCheckTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
-
-
-new const PLUGIN_VERSION[] = "2.16";
 
 public plugin_init()
 {
@@ -99,6 +97,7 @@ public plugin_init()
 	cfg_read_int("general","aim_block_method",g_iAimBlockMethod,g_iAimBlockMethod);
 	cfg_read_bool("general","block_score",g_bBlockScoreAttr,g_bBlockScoreAttr);
 	cfg_read_bool("general","block_score_attack",g_bBlockScoreAttrAttack,g_bBlockScoreAttrAttack);
+	cfg_read_int("general","block_score_delay",g_iBlockScoreSendDelay,g_iBlockScoreSendDelay);
 	cfg_read_bool("general","block_score_local_dead",g_bBlockScoreLocalDead,g_bBlockScoreLocalDead);
 	cfg_read_flt("general","block_score_radar_staytime",g_fRadarStayTime,g_fRadarStayTime);
 	cfg_read_flt("general","block_score_radar_deadtime",g_fRadarDeadTime,g_fRadarDeadTime);
@@ -107,6 +106,8 @@ public plugin_init()
 	cfg_read_bool("general","block_speedhack_mouseduck",g_bBlockSpeedHackDuck,g_bBlockSpeedHackDuck);
 	cfg_read_flt("general","block_speedhack_time",g_fSpeedHackTime,g_fSpeedHackTime);
 	cfg_read_bool("general","block_backtrack",g_bBlockBackTrack,g_bBlockBackTrack);
+	new flags[64] = "";
+	cfg_read_str("general", "vip_flags", flags, flags, charsmax(flags));
 
 	// next block code for check readwrite access to cfg
 	new bool:test_read_write_cfg = !g_bBlockBadCmd;
@@ -232,6 +233,11 @@ public plugin_init()
 	{
 		register_forward(FM_AddToFullPack, "AddToFullPack_Post", ._post = true);
 	}
+
+	if (flags[0] != EOS)
+	{
+		g_iVipFlags = read_flags(flags);
+	}
 	
 	log_amx("AimBlocker [v%s] loaded!", PLUGIN_VERSION);
 	log_amx("Settings: ");
@@ -247,6 +253,7 @@ public plugin_init()
 	log_amx("  block_speedhack_mouseduck = %i (also can block +duck mwheelup)",g_bBlockSpeedHack);
 	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
 	log_amx("  block_backtrack = %i (not tested)",g_bBlockBackTrack);
+	log_amx("  VIP TAB flags: %s [bin %X]",flags, g_iVipFlags == -2 ? 0 : g_iVipFlags);
 }
 
 public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet) 
@@ -325,7 +332,6 @@ public clear_client(id)
 	g_vAngles2[id][0] = g_vAngles2[id][1] = g_vAngles2[id][2] = 0.0;
 	g_vOldStepOrigin[id][0] = g_vOldStepOrigin[id][1] = g_vOldStepOrigin[id][2] = 0.0;
 	g_iButtons[id] = /*g_iButtons_old[id] =*/ 0;
-	g_vCmdCheckTime[id] = 0.0;
 	g_iCmdCounter[id] = 0;
 	g_iCmdMsecCounter[id] = 0;
 	g_iBlockMove[id] = 0;
@@ -347,11 +353,11 @@ public client_disconnected(id)
 public client_connectex(id)
 {
 	clear_client(id);
-	g_vCmdCheckTime[id] = get_gametime();
 }
 
 public client_putinserver(id)
 {
+	clear_client(id);
 	g_vCL_movespeedkey[id] = 0.52;
 	g_bUserBot[id] = is_user_bot(id) || is_user_hltv(id);
 	if (g_bBlockBadCmd && !g_bUserBot[id])
@@ -629,6 +635,7 @@ public FM_CmdStart_Pre(id, handle)
 
 			if (oldScore == true && g_bCurScore[id] == false)
 			{
+				g_iScoreSendCounter[id] = -1;
 				if (!is_user_bot(id))
 				{
 					new bool:in_buyzone = true;
@@ -678,26 +685,63 @@ public FM_CmdStart_Pre(id, handle)
 					message_end();
 				}
 			}
-			else if (oldScore == false && g_bCurScore[id] == true)
+			else 
 			{
-				if (!is_user_bot(id))
+				if (oldScore == false && g_bCurScore[id] == true)
 				{
-					for(new iPlayer = 1; iPlayer <= MaxClients; iPlayer++)
+					if (g_iBlockScoreSendDelay > 0)
 					{
-						if (is_user_connected(iPlayer))
+						g_iScoreSendCounter[id] = g_iBlockScoreSendDelay;
+					}
+					else 
+					{
+						if (!is_user_bot(id))
 						{
-							UpdateUserScoreForPlayer(id, iPlayer);
+							for(new iPlayer = 1; iPlayer <= MaxClients; iPlayer++)
+							{
+								if (is_user_connected(iPlayer))
+								{
+									UpdateUserScoreForPlayer(id, iPlayer);
+								}
+							}
+
+							// force update scoreboard 
+							message_begin(USE_UNRELIABLE ? MSG_ONE_UNRELIABLE : MSG_ONE, g_iScoreInfoMsg, _,id);
+							write_byte(33); // is safe!
+							write_short(0);
+							write_short(0);
+							write_short(0);
+							write_short(0);
+							message_end();
 						}
 					}
+				}
+				else if (g_iBlockScoreSendDelay > 0)
+				{
+					g_iScoreSendCounter[id]--;
+					if (g_iScoreSendCounter[id] == 0)
+					{
+						g_iScoreSendCounter[id] = -1;
+						if (!is_user_bot(id))
+						{
+							for(new iPlayer = 1; iPlayer <= MaxClients; iPlayer++)
+							{
+								if (is_user_connected(iPlayer))
+								{
+									UpdateUserScoreForPlayer(id, iPlayer);
+								}
+							}
 
-					// force update scoreboard 
-					message_begin(USE_UNRELIABLE ? MSG_ONE_UNRELIABLE : MSG_ONE, g_iScoreInfoMsg, _,id);
-					write_byte(33); // is safe!
-					write_short(0);
-					write_short(0);
-					write_short(0);
-					write_short(0);
-					message_end();
+							// force update scoreboard 
+							message_begin(USE_UNRELIABLE ? MSG_ONE_UNRELIABLE : MSG_ONE, g_iScoreInfoMsg, _,id);
+							write_byte(33); // is safe!
+							write_short(0);
+							write_short(0);
+							write_short(0);
+							write_short(0);
+							message_end();
+						}
+					}
 				}
 			}
 		}
@@ -712,20 +756,6 @@ public FM_CmdStart_Pre(id, handle)
 		
 		g_iButtons[id] = btn;
 	}
-	return FMRES_IGNORED;
-}
-
-public FM_UpdateClientData_Post(id, weapons, cd)
-{
-	if (id <= 0 || id > MaxClients) 
-	{
-		return FMRES_IGNORED;
-	}
-
-	g_fMaxSpeedOldOld[id] = g_fMaxSpeedOld[id];
-	g_fMaxSpeedOld[id] = g_fMaxSpeed[id];
-	get_cd(cd, CD_MaxSpeed, g_fMaxSpeed[id]);
-	
 	return FMRES_IGNORED;
 }
 
@@ -749,16 +779,46 @@ public ScoreAttrib_HOOK(msgid, dest, id)
 					return PLUGIN_HANDLED;
 				}
 			}
+
+			new flags = get_msg_arg_int(2);
+			if (flags & SCORE_STATUS_VIP == 0  && (g_iVipFlags != -2 && get_user_flags(id) & g_iVipFlags))
+			{
+				set_msg_arg_int(2, ARG_BYTE, flags | SCORE_STATUS_VIP);
+			}
 			return PLUGIN_CONTINUE;
 		}
 		else if (get_member(id, m_iTeam) == get_member(target, m_iTeam))
 		{
+			new flags = get_msg_arg_int(2);
+			if (flags & SCORE_STATUS_VIP == 0  && (g_iVipFlags != -2 && get_user_flags(id) & g_iVipFlags))
+			{
+				set_msg_arg_int(2, ARG_BYTE, flags | SCORE_STATUS_VIP);
+			}
 			return PLUGIN_CONTINUE;
 		}
 		return PLUGIN_HANDLED;
 	}
 
+	new flags = get_msg_arg_int(2);
+	if (flags & SCORE_STATUS_VIP == 0  && (g_iVipFlags != -2 && get_user_flags(id) & g_iVipFlags))
+	{
+		set_msg_arg_int(2, ARG_BYTE, flags | SCORE_STATUS_VIP);
+	}
 	return PLUGIN_CONTINUE;
+}
+
+public FM_UpdateClientData_Post(id, weapons, cd)
+{
+	if (id <= 0 || id > MaxClients) 
+	{
+		return FMRES_IGNORED;
+	}
+
+	g_fMaxSpeedOldOld[id] = g_fMaxSpeedOld[id];
+	g_fMaxSpeedOld[id] = g_fMaxSpeed[id];
+	get_cd(cd, CD_MaxSpeed, g_fMaxSpeed[id]);
+	
+	return FMRES_IGNORED;
 }
 
 public fw_block_weapon_secondary(const weapon)
@@ -833,7 +893,7 @@ stock UpdateUserScoreForPlayer(id, iPlayer)
 			iState |= SCORE_STATUS_BOMB;
 		}
 
-		if (get_member(iPlayer,m_bIsVIP))
+		if (get_member(iPlayer,m_bIsVIP) || (g_iVipFlags != -2 && get_user_flags(iPlayer) & g_iVipFlags))
 		{
 			iState |= SCORE_STATUS_VIP;
 		}
