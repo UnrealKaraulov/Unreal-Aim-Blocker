@@ -8,7 +8,7 @@
 #define _easy_cfg_internal
 #include <easy_cfg>
 
-new const PLUGIN_VERSION[] = "2.17";
+new const PLUGIN_VERSION[] = "2.18";
 
 #pragma ctrlchar '\'
 
@@ -59,8 +59,13 @@ new Float:g_fMaxSpeed[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fMaxSpeedOld[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fMaxSpeedOldOld[MAX_PLAYERS + 1] = {0.0, ...};
 
-new Float:g_vAngles1[MAX_PLAYERS + 1][3];
-new Float:g_vAngles2[MAX_PLAYERS + 1][3];
+new Float:g_vAngles_old1[MAX_PLAYERS + 1][3];
+new Float:g_vAngles_cur1[MAX_PLAYERS + 1][3];
+new Float:g_vAngles_old2[MAX_PLAYERS + 1][3];
+new Float:g_vAngles_cur2[MAX_PLAYERS + 1][3];
+
+new Float:g_vPunchAngle[MAX_PLAYERS + 1][3];
+
 new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
 
@@ -174,27 +179,27 @@ public plugin_init()
 		}
 	}
 	
-	if (g_iAimBlockMethod == 1)
+	if (g_iAimBlockMethod == 1 || g_iAimBlockMethod == 3)
 	{	
 		RegisterHookChain(RG_PM_Move, "PM_Move_Post", .post = true);
 	}
 
-	if (g_iAimBlockMethod == 2 || g_bBlockBadCmd || g_bBlockSpeedHack)
+	if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 3 || g_bBlockBadCmd || g_bBlockSpeedHack)
 	{
 		RegisterHookChain(RG_PM_Move, "PM_Move_Pre", .post = false);
 	}
 	
-	if (g_bBlockBadCmd || g_bBlockScoreAttr || g_iAimBlockMethod == 1)
+	if (g_bBlockBadCmd || g_bBlockScoreAttr || g_iAimBlockMethod == 1 || g_iAimBlockMethod == 3)
 	{
 		register_forward(FM_CmdStart, "FM_CmdStart_Pre", ._post = false);
 	}
 
-	if (g_bBlockBadCmd)
+	if (g_bBlockBadCmd || g_iAimBlockMethod == 3)
 	{
 		register_forward(FM_UpdateClientData, "FM_UpdateClientData_Post", ._post = true);
 	}
 
-	if (g_iAimBlockMethod == 1)
+	if (g_iAimBlockMethod == 1 || g_iAimBlockMethod == 3)
 	{	
 		cfg_set_path("reaimdetector");
 
@@ -241,7 +246,7 @@ public plugin_init()
 	
 	log_amx("AimBlocker [v%s] loaded!", PLUGIN_VERSION);
 	log_amx("Settings: ");
-	log_amx("  aim_block_method = %i",g_iAimBlockMethod);
+	log_amx("  aim_block_method = %s",g_iAimBlockMethod == 0 ? "none" : g_iAimBlockMethod == 1 ? "[angle delay]" : g_iAimBlockMethod == 2 ? "[key delay]" : g_iAimBlockMethod == 3 ? "[2x angle delay] + [key delay] + [punch delay/rnd]" : "unknown");
 	log_amx("  block_weapon_count = %i",iBlockWeaponCount);
 	log_amx("  block_bad_cmd = %i",g_bBlockBadCmd);
 	log_amx("  block_score = %i",g_bBlockScoreAttr);
@@ -261,14 +266,16 @@ public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet)
 	if(!player || host > MaxClients || ent > MaxClients)
 		return FMRES_IGNORED;
 
-	static Float:animtime = 0.0;
-	get_es(es_handle, ES_AnimTime, animtime);
-
-	if (animtime != 0.0)
+	if (g_bBlockBackTrack)
 	{
-		set_es(es_handle, ES_AnimTime, animtime - 1.0);
+		static Float:animtime = 0.0;
+		get_es(es_handle, ES_AnimTime, animtime);
+
+		if (animtime != 0.0)
+		{
+			set_es(es_handle, ES_AnimTime, animtime - 1.0);
+		}
 	}
-	
 	return FMRES_IGNORED;
 }
 
@@ -328,8 +335,11 @@ public PM_PlayStepSound_Pre(step, Float:vol, id)
 public clear_client(id)
 {
 	g_bCurScore[id] = g_bWaitForBuyZone[id] = false;
-	g_vAngles1[id][0] = g_vAngles1[id][1] = g_vAngles1[id][2] = 0.0;
-	g_vAngles2[id][0] = g_vAngles2[id][1] = g_vAngles2[id][2] = 0.0;
+	g_vAngles_old1[id][0] = g_vAngles_old1[id][1] = g_vAngles_old1[id][2] = 0.0;
+	g_vAngles_cur1[id][0] = g_vAngles_cur1[id][1] = g_vAngles_cur1[id][2] = 0.0;
+	g_vAngles_old2[id][0] = g_vAngles_old2[id][1] = g_vAngles_old2[id][2] = 0.0;
+	g_vAngles_cur2[id][0] = g_vAngles_cur2[id][1] = g_vAngles_cur2[id][2] = 0.0;
+	g_vPunchAngle[id][0] = g_vPunchAngle[id][1] = g_vPunchAngle[id][2] = 0.0;
 	g_vOldStepOrigin[id][0] = g_vOldStepOrigin[id][1] = g_vOldStepOrigin[id][2] = 0.0;
 	g_iButtons[id] = /*g_iButtons_old[id] =*/ 0;
 	g_iCmdCounter[id] = 0;
@@ -399,15 +409,34 @@ public PM_Move_Post(const id)
 		if (g_iAimBlockMethod == 1)
 		{
 			get_pmove(pm_oldangles, vTmpAngles);
-			set_pmove(pm_oldangles, g_vAngles1[id]);
-			g_vAngles1[id][0] = vTmpAngles[0];
-			g_vAngles1[id][1] = vTmpAngles[1];
-			g_vAngles1[id][2] = vTmpAngles[2];
+			set_pmove(pm_oldangles, g_vAngles_old1[id]);
+			g_vAngles_old1[id][0] = vTmpAngles[0];
+			g_vAngles_old1[id][1] = vTmpAngles[1];
+			g_vAngles_old1[id][2] = vTmpAngles[2];
 			get_pmove(pm_angles, vTmpAngles);
-			set_pmove(pm_angles, g_vAngles2[id]);
-			g_vAngles2[id][0] = vTmpAngles[0];
-			g_vAngles2[id][1] = vTmpAngles[1];
-			g_vAngles2[id][2] = vTmpAngles[2];
+			set_pmove(pm_angles, g_vAngles_cur1[id]);
+			g_vAngles_cur1[id][0] = vTmpAngles[0];
+			g_vAngles_cur1[id][1] = vTmpAngles[1];
+			g_vAngles_cur1[id][2] = vTmpAngles[2];
+		}
+		else if (g_iAimBlockMethod == 3)
+		{
+			get_pmove(pm_oldangles, vTmpAngles);
+			set_pmove(pm_oldangles, g_vAngles_old1[id]);
+			g_vAngles_old1[id][0] = g_vAngles_old2[id][0];
+			g_vAngles_old1[id][1] = g_vAngles_old2[id][1];
+			g_vAngles_old1[id][2] = g_vAngles_old2[id][2];
+			g_vAngles_old2[id][0] = vTmpAngles[0];
+			g_vAngles_old2[id][1] = vTmpAngles[1];
+			g_vAngles_old2[id][2] = vTmpAngles[2];
+			get_pmove(pm_angles, vTmpAngles);
+			set_pmove(pm_angles, g_vAngles_cur1[id]);
+			g_vAngles_cur1[id][0] = g_vAngles_cur2[id][0];
+			g_vAngles_cur1[id][1] = g_vAngles_cur2[id][1];
+			g_vAngles_cur1[id][2] = g_vAngles_cur2[id][2];
+			g_vAngles_cur2[id][0] = vTmpAngles[0];
+			g_vAngles_cur2[id][1] = vTmpAngles[1];
+			g_vAngles_cur2[id][2] = vTmpAngles[2];
 		}
 	}
 	return HC_CONTINUE;
@@ -418,10 +447,10 @@ public PM_Move_Pre(const id)
 	static Float:vTmpAngles[3];
 	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
 	{	
-		if (g_iAimBlockMethod == 2 || (g_bBlockSpeedHack && !g_bBlockSpeedHackDuck))
+		if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 3 || (g_bBlockSpeedHack && !g_bBlockSpeedHackDuck))
 		{
 			new cmd = get_pmove(pm_cmd);
-			if (g_iAimBlockMethod == 2)
+			if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 3)
 				set_ucmd(cmd,ucmd_buttons, get_entvar(id, var_button));
 			if (g_bBlockSpeedHack && !g_bBlockSpeedHackDuck)
 			{
@@ -746,7 +775,7 @@ public FM_CmdStart_Pre(id, handle)
 			}
 		}
 
-		if (g_iAimBlockMethod == 2)
+		if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 3)
 		{
 			/*new tmpbutton = get_entvar(id, var_oldbuttons);
 			set_entvar(id, var_oldbuttons, g_iButtons_old[id]);
@@ -814,10 +843,22 @@ public FM_UpdateClientData_Post(id, weapons, cd)
 		return FMRES_IGNORED;
 	}
 
-	g_fMaxSpeedOldOld[id] = g_fMaxSpeedOld[id];
-	g_fMaxSpeedOld[id] = g_fMaxSpeed[id];
-	get_cd(cd, CD_MaxSpeed, g_fMaxSpeed[id]);
-	
+	if (g_bBlockBadCmd)
+	{
+		g_fMaxSpeedOldOld[id] = g_fMaxSpeedOld[id];
+		g_fMaxSpeedOld[id] = g_fMaxSpeed[id];
+		get_cd(cd, CD_MaxSpeed, g_fMaxSpeed[id]);
+	}
+
+	if (g_iAimBlockMethod == 3)
+	{
+		static Float:vAngles[3];
+		get_cd(cd, CD_PunchAngle, vAngles);
+		set_cd(cd, CD_PunchAngle, g_vPunchAngle[id]);
+		g_vPunchAngle[id][0] = vAngles[0] * random_float(0.9,1.1);
+		g_vPunchAngle[id][1] = vAngles[1] * random_float(0.9,1.1);
+		g_vPunchAngle[id][2] = vAngles[2] * random_float(0.9,1.1);
+	}
 	return FMRES_IGNORED;
 }
 
