@@ -8,7 +8,7 @@
 #define _easy_cfg_internal
 #include <easy_cfg>
 
-new const PLUGIN_VERSION[] = "2.18";
+new const PLUGIN_VERSION[] = "2.19";
 
 #pragma ctrlchar '\'
 
