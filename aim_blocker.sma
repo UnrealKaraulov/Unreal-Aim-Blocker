@@ -12,12 +12,14 @@ new const PLUGIN_VERSION[] = "2.18";
 
 #pragma ctrlchar '\'
 
+new const config_version = 1;
+
 new const DEFAULT_BLOCKWEAPON_LIST[][] = { "weapon_p228", "weapon_xm1014", "weapon_c4", "weapon_mac10", "weapon_elite", "weapon_fiveseven",
 									 "weapon_ump45", "weapon_galil", "weapon_mp5navy", "weapon_m249", "weapon_m3", "weapon_tmp", "weapon_deagle", "weapon_ak47", "weapon_p90" };
 
 new Array:g_aBlockWeapons;
 
-new g_iAimBlockMethod = 1;
+new g_iAimBlockMethod = 2;
 new g_iScoreAttribMsg = 0;
 new g_iScoreInfoMsg = 0;
 new g_iForcechasecam = 0;
@@ -34,14 +36,15 @@ new g_iBlockMove[MAX_PLAYERS + 1] = {0, ...};
 new g_iStepCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iScoreSendCounter[MAX_PLAYERS + 1] = {0, ...};
 
+new bool:g_bShowDef = false;
 new bool:g_bBlockScoreAttr = true;
 new bool:g_bBlockScoreAttrAttack = false;
 new bool:g_bBlockScoreLocalDead = false;
-new bool:g_bShowDef = false;
-new bool:g_bBlockBadCmd = false;
-new bool:g_bBlockSpeedHack = false;
+new bool:g_bBlockBadCmd = true;
+new bool:g_bBlockSpeedHack = true;
 new bool:g_bBlockSpeedHackDuck = false;
 new bool:g_bBlockBackTrack = false;
+new bool:g_bCustomSeedWhenMoving = true;
 
 new bool:g_bCurScore[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bWaitForBuyZone[MAX_PLAYERS + 1] = {false, ...};
@@ -97,6 +100,17 @@ public plugin_init()
 		}
 	}
 
+	new cur_config_version = 0;
+	cfg_read_int("general", "config_version", cur_config_version, cur_config_version);
+
+	if (cur_config_version != config_version)
+	{
+		log_amx("Create new config, because version changed from %i to %i", cur_config_version, config_version);
+		cfg_clear();
+		cfg_write_int("general", "config_version", config_version);
+	}
+
+
 	new iBlockWeaponCount = 0;
 	cfg_read_int("general","block_weapon_count",iBlockWeaponCount,iBlockWeaponCount);
 	cfg_read_int("general","aim_block_method",g_iAimBlockMethod,g_iAimBlockMethod);
@@ -111,6 +125,7 @@ public plugin_init()
 	cfg_read_bool("general","block_speedhack_mouseduck",g_bBlockSpeedHackDuck,g_bBlockSpeedHackDuck);
 	cfg_read_flt("general","block_speedhack_time",g_fSpeedHackTime,g_fSpeedHackTime);
 	cfg_read_bool("general","block_backtrack",g_bBlockBackTrack,g_bBlockBackTrack);
+	cfg_read_bool("general","random_seed_when_moving",g_bCustomSeedWhenMoving,g_bCustomSeedWhenMoving);
 	new flags[64] = "";
 	cfg_read_str("general", "vip_flags", flags, flags, charsmax(flags));
 
@@ -194,6 +209,11 @@ public plugin_init()
 		register_forward(FM_CmdStart, "FM_CmdStart_Pre", ._post = false);
 	}
 
+	if (g_bCustomSeedWhenMoving)
+	{
+		register_forward(FM_CmdStart, "FM_CmdStart_Post", ._post = true);
+	}
+
 	if (g_bBlockBadCmd || g_iAimBlockMethod == 3)
 	{
 		register_forward(FM_UpdateClientData, "FM_UpdateClientData_Post", ._post = true);
@@ -234,7 +254,7 @@ public plugin_init()
 		RegisterHookChain(RG_PM_PlayStepSound, "PM_PlayStepSound_Pre", .post = false);
 	}
 
-	if (g_bBlockBackTrack)
+	if (g_bBlockBackTrack || g_iAimBlockMethod == 3)
 	{
 		register_forward(FM_AddToFullPack, "AddToFullPack_Post", ._post = true);
 	}
@@ -254,8 +274,8 @@ public plugin_init()
 	log_amx("  block_score_local_dead = %i",g_bBlockScoreLocalDead);
 	log_amx("  block_score_radar_staytime = %f",g_fRadarStayTime);
 	log_amx("  block_score_radar_deadtime = %f",g_fRadarDeadTime);
-	log_amx("  block_speedhack = %i (not recommended, use 'hackdetector lite' instead!)",g_bBlockSpeedHack);
-	log_amx("  block_speedhack_mouseduck = %i (also can block +duck mwheelup)",g_bBlockSpeedHack);
+	log_amx("  block_speedhack = %i (you can use 'hackdetector lite' instead)",g_bBlockSpeedHack);
+	log_amx("  block_speedhack_mouseduck = %i (also can block +duck mwheelup)",g_bBlockSpeedHackDuck);
 	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
 	log_amx("  block_backtrack = %i (not tested)",g_bBlockBackTrack);
 	log_amx("  VIP TAB flags: %s [bin %X]",flags, g_iVipFlags == -2 ? 0 : g_iVipFlags);
@@ -270,11 +290,15 @@ public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet)
 	{
 		static Float:animtime = 0.0;
 		get_es(es_handle, ES_AnimTime, animtime);
-
-		if (animtime != 0.0)
-		{
-			set_es(es_handle, ES_AnimTime, animtime - 1.0);
-		}
+		animtime *= 1.2;
+		set_es(es_handle, ES_AnimTime, animtime);
+	}
+	if (g_iAimBlockMethod == 3 && ent == host)
+	{
+		static Float:vAngles[3];
+		get_es(es_handle, ES_Angles, vAngles);
+		vAngles[0] += random_float(0.1, 0.5);
+		set_es(es_handle, ES_Angles, vAngles);
 	}
 	return FMRES_IGNORED;
 }
@@ -788,6 +812,16 @@ public FM_CmdStart_Pre(id, handle)
 	return FMRES_IGNORED;
 }
 
+public FM_CmdStart_Post(id)
+{
+	static Float:vVelocity[3];
+	get_entvar(id, var_velocity, vVelocity);
+	if (xs_vec_len(vVelocity) > 10.0)
+	{
+		set_member(id, random_seed, random_num(0, 2147483646));
+	}
+}
+
 // Use score attrib message [like in softblocker]
 public ScoreAttrib_HOOK(msgid, dest, id) 
 {
@@ -853,11 +887,26 @@ public FM_UpdateClientData_Post(id, weapons, cd)
 	if (g_iAimBlockMethod == 3)
 	{
 		static Float:vAngles[3];
+		static Float:vVelocity[3];
+		get_cd(cd, CD_ViewOfs, vAngles);
+		if (vAngles[2] == -8.0)
+		{
+			vAngles[2] = -7.0;
+		}
+		set_cd(cd, CD_ViewOfs, vAngles);
 		get_cd(cd, CD_PunchAngle, vAngles);
 		set_cd(cd, CD_PunchAngle, g_vPunchAngle[id]);
-		g_vPunchAngle[id][0] = vAngles[0] * random_float(0.9,1.1);
-		g_vPunchAngle[id][1] = vAngles[1] * random_float(0.9,1.1);
-		g_vPunchAngle[id][2] = vAngles[2] * random_float(0.9,1.1);
+		get_entvar(id, var_velocity, vVelocity);
+		if (xs_vec_len(vVelocity) > 10.0)
+		{
+			g_vPunchAngle[id][0] = vAngles[0] * 1.1;
+			g_vPunchAngle[id][1] = vAngles[1] * 1.1;
+		}
+		else 
+		{
+			g_vPunchAngle[id][0] = vAngles[0] * 1.02;
+			g_vPunchAngle[id][1] = vAngles[1] * 1.02;
+		}
 	}
 	return FMRES_IGNORED;
 }
@@ -876,7 +925,6 @@ public fw_block_weapon_secondary(const weapon)
 	}
 	else if (fSecondary < 1000.0)
 		set_member(weapon, m_Weapon_flNextSecondaryAttack, 2000.0);
-
 }
 
 stock trim_to_dir(path[])
