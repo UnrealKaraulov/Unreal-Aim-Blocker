@@ -8,11 +8,11 @@
 #define _easy_cfg_internal
 #include <easy_cfg>
 
-new const PLUGIN_VERSION[] = "2.19";
+new const PLUGIN_VERSION[] = "2.20";
 
 #pragma ctrlchar '\'
 
-new const config_version = 1;
+new const config_version = 2;
 
 new const DEFAULT_BLOCKWEAPON_LIST[][] = { "weapon_p228", "weapon_xm1014", "weapon_c4", "weapon_mac10", "weapon_elite", "weapon_fiveseven",
 									 "weapon_ump45", "weapon_galil", "weapon_mp5navy", "weapon_m249", "weapon_m3", "weapon_tmp", "weapon_deagle", "weapon_ak47", "weapon_p90" };
@@ -53,14 +53,13 @@ new bool:g_bUserBot[MAX_PLAYERS + 1] = {false, ...};
 
 new Float:g_fRadarStayTime = 0.45;
 new Float:g_fRadarDeadTime = 0.05;
-new Float:g_fSpeedHackTime = 0.25;
+new Float:g_fSpeedHackTime = 0.23;
 
 new Float:g_fOldStepVol[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fStepTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fMaxSpeed[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fMaxSpeedOld[MAX_PLAYERS + 1] = {0.0, ...};
-new Float:g_fMaxSpeedOldOld[MAX_PLAYERS + 1] = {0.0, ...};
 
 new Float:g_vAngles_old1[MAX_PLAYERS + 1][3];
 new Float:g_vAngles_cur1[MAX_PLAYERS + 1][3];
@@ -375,7 +374,6 @@ public clear_client(id)
 	g_iStepCounter[id] = 0;
 	g_fMaxSpeed[id] = 0.0;
 	g_fMaxSpeedOld[id] = 0.0;
-	g_fMaxSpeedOldOld[id] = 0.0;
 	g_fRadarUpdateTime[id] = 0.0;
 }
 
@@ -537,15 +535,14 @@ public FM_CmdStart_Pre(id, handle)
 			
 			new Float:fMaxMov = g_fMaxSpeed[id];
 			new Float:fMaxMov2 = g_fMaxSpeedOld[id];
-			new Float:fMaxMov3 = g_fMaxSpeedOldOld[id];
-			
+
 			if (iMsec < 1)
 			{
 				if (!task_exists(id))
 					set_task(0.01,"force_drop_client_bad_fps",id);
 				return FMRES_SUPERCEDE;
 			}
-			else if (fMaxMov > 0.0 && fMaxMov <= 400.0 && is_user_alive(id) && fMaxMov2 <= 400.0)
+			else if (fMaxMov > 0.0 && fMaxMov <= 400.0 && fMaxMov2 <= 400.0)
 			{
 				new Float:fForward = 0.0;
 				get_uc(handle, UC_ForwardMove, fForward);
@@ -581,16 +578,14 @@ public FM_CmdStart_Pre(id, handle)
 					}
 					else if (floatabs(fmov - fMaxMov) > 5.0 && floatabs(fmov2 - fMaxMov) > 5.0 &&
 							floatabs(fmov - fMaxMov2) > 5.0 && floatabs(fmov2 - fMaxMov2) > 5.0 &&
-							floatabs(fmov - fMaxMov3) > 5.0 && floatabs(fmov2 - fMaxMov3) > 5.0 &&
-							floatabs(fmov - MAGIC_SPEED) > 1.0 && floatabs(fmov2 - MAGIC_SPEED) > 1.0)
+							fmov != MAGIC_SPEED && fmov2 != MAGIC_SPEED)
 					{
 						if (g_iBlockMove[id] == 0)
 						{
 							new Float:fmov3 = fmov * 1.25;
 							new Float:fmov4 = fmov2 * 1.25;
 							if (floatabs(fmov3 - fMaxMov) > 5.0 && floatabs(fmov4 - fMaxMov) > 5.0 
-								&& floatabs(fmov3 - fMaxMov2) > 5.0 && floatabs(fmov4 - fMaxMov2) > 5.0
-								&& floatabs(fmov3 - fMaxMov3) > 5.0 && floatabs(fmov4 - fMaxMov3) > 5.0)
+								&& floatabs(fmov3 - fMaxMov2) > 5.0 && floatabs(fmov4 - fMaxMov2) > 5.0)
 							{
 								g_iBlockMove[id]++;
 							}
@@ -879,9 +874,14 @@ public FM_UpdateClientData_Post(id, weapons, cd)
 
 	if (g_bBlockBadCmd)
 	{
-		g_fMaxSpeedOldOld[id] = g_fMaxSpeedOld[id];
-		g_fMaxSpeedOld[id] = g_fMaxSpeed[id];
-		get_cd(cd, CD_MaxSpeed, g_fMaxSpeed[id]);
+		static Float:fCurSpeed = 0.0;
+		get_cd(cd, CD_MaxSpeed, fCurSpeed);
+
+		if (fCurSpeed != g_fMaxSpeedOld[id] && fCurSpeed != g_fMaxSpeed[id])
+		{
+			g_fMaxSpeedOld[id] = g_fMaxSpeed[id];
+			g_fMaxSpeed[id] = fCurSpeed;
+		}
 	}
 
 	if (g_iAimBlockMethod == 3)
