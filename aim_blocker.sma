@@ -8,7 +8,7 @@
 #define _easy_cfg_internal
 #include <easy_cfg>
 
-new const PLUGIN_VERSION[] = "2.20";
+new const PLUGIN_VERSION[] = "2.21";
 
 #pragma ctrlchar '\'
 
@@ -50,6 +50,7 @@ new bool:g_bCurScore[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bWaitForBuyZone[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bRadarFix[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bUserBot[MAX_PLAYERS + 1] = {false, ...};
+new bool:g_bCvarChecking[MAX_PLAYERS + 1] = {false, ...};
 
 new Float:g_fRadarStayTime = 0.45;
 new Float:g_fRadarDeadTime = 0.05;
@@ -58,8 +59,8 @@ new Float:g_fSpeedHackTime = 0.23;
 new Float:g_fOldStepVol[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fStepTime[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fRadarUpdateTime[MAX_PLAYERS + 1] = {0.0, ...};
-new Float:g_fMaxSpeed[MAX_PLAYERS + 1] = {0.0, ...};
-new Float:g_fMaxSpeedOld[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_fSpeedHistory[MAX_PLAYERS + 1][3];
+new Float:g_fSpeedHistoryTime[MAX_PLAYERS + 1] = {0.0, ...};
 
 new Float:g_vAngles_old1[MAX_PLAYERS + 1][3];
 new Float:g_vAngles_cur1[MAX_PLAYERS + 1][3];
@@ -69,6 +70,7 @@ new Float:g_vAngles_cur2[MAX_PLAYERS + 1][3];
 new Float:g_vPunchAngle[MAX_PLAYERS + 1][3];
 
 new Float:g_vCL_movespeedkey[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_vCL_forwardspeed[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_vOldStepOrigin[MAX_PLAYERS + 1][3];
 
 public plugin_init()
@@ -372,8 +374,6 @@ public clear_client(id)
 	g_fOldStepVol[id] = 0.0;
 	g_fStepTime[id] = 0.0;
 	g_iStepCounter[id] = 0;
-	g_fMaxSpeed[id] = 0.0;
-	g_fMaxSpeedOld[id] = 0.0;
 	g_fRadarUpdateTime[id] = 0.0;
 }
 
@@ -391,11 +391,17 @@ public client_putinserver(id)
 {
 	clear_client(id);
 	g_vCL_movespeedkey[id] = 0.52;
+	g_vCL_forwardspeed[id] = 400.0;
+	g_fSpeedHistory[id][0] = g_fSpeedHistory[id][1] = g_fSpeedHistory[id][2] = 200.0;
 	g_bUserBot[id] = is_user_bot(id) || is_user_hltv(id);
 	if (g_bBlockBadCmd && !g_bUserBot[id])
 	{
+		g_bCvarChecking[id] = true;
 		query_client_cvar(id, "cl_movespeedkey", "update_client_movespeedkey");
-		set_task(5.0, "query_client_movespeedkey", id);
+		query_client_cvar(id, "cl_forwardspeed", "update_client_forwardspeed");
+		query_client_cvar(id, "cl_backspeed", "update_client_forwardspeed");
+		query_client_cvar(id, "cl_sidespeed", "update_client_forwardspeed");
+		set_task(5.0, "query_client_movespeed", id);
 	}
 }
 
@@ -409,12 +415,43 @@ public update_client_movespeedkey(id, const cvar[], const value[])
 	}
 }
 
-public query_client_movespeedkey(id)
+public update_client_forwardspeed(id, const cvar[], const value[])
+{
+	new Float:fSpeed = str_to_float(value);
+	// reset default
+	if (fSpeed < 399.0)
+	{
+		g_vCL_forwardspeed[id] = 400.0;
+		if (g_bCvarChecking[id])
+		{
+			client_cmd(id, "echo [RESET BROKEN SPEED CVARS FROM [%i] TO DEFAULT [400] STEAM VALUES]", floatround(fSpeed));
+			client_cmd(id, "cl_forwardspeed 400");
+			client_cmd(id, "cl_backspeed 400");
+			client_cmd(id, "cl_sidespeed 400");
+		}
+	}
+	else if (g_bCvarChecking[id] && g_vCL_forwardspeed[id] > 0.0 && g_vCL_forwardspeed[id] != fSpeed)
+	{
+		g_vCL_forwardspeed[id] = 400.0;
+		client_cmd(id, "echo [RESET NOT SYNC SPEED CVARS [%i] TO DEFAULT [400] STEAM VALUES]", floatround(fSpeed));
+		client_cmd(id, "cl_forwardspeed 400");
+		client_cmd(id, "cl_backspeed 400");
+		client_cmd(id, "cl_sidespeed 400");
+	}
+	else 
+	{
+		g_vCL_forwardspeed[id] = fSpeed;
+	}
+}
+
+public query_client_movespeed(id)
 {
 	if (!g_bUserBot[id] && is_user_connected(id))
 	{
+		g_bCvarChecking[id] = false;
 		query_client_cvar(id, "cl_movespeedkey", "update_client_movespeedkey");
-		set_task(5.0, "query_client_movespeedkey", id);
+		query_client_cvar(id, "cl_forwardspeed", "update_client_forwardspeed");
+		set_task(5.0, "query_client_movespeed", id);
 	}
 }
 
@@ -532,9 +569,6 @@ public FM_CmdStart_Pre(id, handle)
 		if (g_bBlockBadCmd)
 		{
 			new iMsec = get_uc(handle, UC_Msec);
-			
-			new Float:fMaxMov = g_fMaxSpeed[id];
-			new Float:fMaxMov2 = g_fMaxSpeedOld[id];
 
 			if (iMsec < 1)
 			{
@@ -542,73 +576,78 @@ public FM_CmdStart_Pre(id, handle)
 					set_task(0.01,"force_drop_client_bad_fps",id);
 				return FMRES_SUPERCEDE;
 			}
-			else if (fMaxMov > 0.0 && fMaxMov <= 400.0 && fMaxMov2 <= 400.0)
+
+			new Float:fForward = 0.0;
+			get_uc(handle, UC_ForwardMove, fForward);
+			new Float:fSide = 0.0;
+			get_uc(handle, UC_SideMove, fSide);
+			new Float:fUp = 0.0;
+			get_uc(handle, UC_UpMove, fUp);
+
+			if ( fForward != 0.0 || fSide != 0.0 || fUp != 0.0 )
 			{
-				new Float:fForward = 0.0;
-				get_uc(handle, UC_ForwardMove, fForward);
-				new Float:fSide = 0.0;
-				get_uc(handle, UC_SideMove, fSide);
-				new Float:fUp = 0.0;
-				get_uc(handle, UC_UpMove, fUp);
-
-				if ( fForward != 0.0 || fSide != 0.0 || fUp != 0.0 )
+				if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT == 0 && fSide != 0.0)
 				{
-					new Float:fmov = xs_sqrt(fForward * fForward + fSide * fSide + fUp * fUp);
-					new Float:fmov2 = fmov / g_vCL_movespeedkey[id];
+					g_iBlockMove[id]++;
+				}
+				else if (btn & IN_FORWARD == 0 && btn & IN_BACK == 0 && fForward != 0.0)
+				{
+					g_iBlockMove[id]++;
+				}
+				else if (btn & IN_MOVERIGHT != 0 && btn & IN_MOVELEFT == 0 && fSide < -1.0)
+				{
+					g_iBlockMove[id]++;
+				}
+				else if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT != 0 && fSide > 1.0)
+				{
+					g_iBlockMove[id]++;
+				}
+				else if (btn & IN_FORWARD != 0 && btn & IN_BACK == 0 && fForward < -1.0)
+				{
+					g_iBlockMove[id]++;
+				}
+				else 
+				{
+					new Float:fMaxMov1 = g_fSpeedHistory[id][0];
+					new Float:fMaxMov2 = g_fSpeedHistory[id][1];
+					new Float:fMaxMov3 = g_fSpeedHistory[id][2];
 
-					if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT == 0 && fSide != 0.0)
+					if (fMaxMov1 <= g_vCL_forwardspeed[id] && fMaxMov2 <= g_vCL_forwardspeed[id] && fMaxMov3 <= g_vCL_forwardspeed[id])
 					{
-						g_iBlockMove[id]++;
-					}
-					else if (btn & IN_FORWARD == 0 && btn & IN_BACK == 0 && fForward != 0.0)
-					{
-						g_iBlockMove[id]++;
-					}
-					else if (btn & IN_MOVERIGHT != 0 && btn & IN_MOVELEFT == 0 && fSide < -1.0)
-					{
-						g_iBlockMove[id]++;
-					}
-					else if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT != 0 && fSide > 1.0)
-					{
-						g_iBlockMove[id]++;
-					}
-					else if (btn & IN_FORWARD != 0 && btn & IN_BACK == 0 && fForward < -1.0)
-					{
-						g_iBlockMove[id]++;
-					}
-					else if (floatabs(fmov - fMaxMov) > 5.0 && floatabs(fmov2 - fMaxMov) > 5.0 &&
+						new Float:fmov = xs_sqrt(fForward * fForward + fSide * fSide + fUp * fUp);
+						new Float:fmov2 = fmov / g_vCL_movespeedkey[id];
+						new Float:fmov3 = fmov * 1.25;
+						new Float:fmov4 = fmov2 * 1.25;
+
+						if (floatabs(fmov - fMaxMov1) > 5.0 && floatabs(fmov2 - fMaxMov1) > 5.0 &&
 							floatabs(fmov - fMaxMov2) > 5.0 && floatabs(fmov2 - fMaxMov2) > 5.0 &&
+							floatabs(fmov - fMaxMov3) > 5.0 && floatabs(fmov2 - fMaxMov3) > 5.0 &&
 							fmov != MAGIC_SPEED && fmov2 != MAGIC_SPEED)
-					{
-						if (g_iBlockMove[id] == 0)
 						{
-							new Float:fmov3 = fmov * 1.25;
-							new Float:fmov4 = fmov2 * 1.25;
-							if (floatabs(fmov3 - fMaxMov) > 5.0 && floatabs(fmov4 - fMaxMov) > 5.0 
-								&& floatabs(fmov3 - fMaxMov2) > 5.0 && floatabs(fmov4 - fMaxMov2) > 5.0)
+							if (g_iBlockMove[id] == 0)
 							{
-								g_iBlockMove[id]++;
+								if (floatabs(fmov3 - fMaxMov1) > 5.0 && floatabs(fmov4 - fMaxMov1) > 5.0 && 
+									floatabs(fmov3 - fMaxMov2) > 5.0 && floatabs(fmov4 - fMaxMov2) > 5.0 &&
+									floatabs(fmov3 - fMaxMov3) > 5.0 && floatabs(fmov4 - fMaxMov3) > 5.0)
+								{
+									g_iBlockMove[id]++;
+								}
+								else 
+								{
+									g_iBlockMove[id] = 0;
+								}
 							}
 							else 
 							{
-								g_iBlockMove[id] = 0;
+								g_iBlockMove[id]++;
 							}
 						}
 						else 
 						{
-							g_iBlockMove[id]++;
+							g_iBlockMove[id] = 0;
 						}
+						//log_amx("[%i] [warn:%i] [btn:%X] m1 = %.2f, m2 = %.2f, m3 = %.2f, m4 = %.2f, max1 = %.2f, max2 = %.2f, max3 = %.2f, side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], btn, fmov,fmov2,fmov3,fmov4,fMaxMov1,fMaxMov2,fMaxMov3,fSide,fForward,fUp);
 					}
-					else 
-					{
-						g_iBlockMove[id] = 0;
-					}
-
-					//log_amx("[%i] [warn:%i] m1 = %.2f, m2 = %.2f, max1 = %.2f, max2 = %.2f, side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], fmov,fmov2,fMaxMov,fMaxMov2,fSide,fForward,fUp);
-				}
-				else 
-				{
-					g_iBlockMove[id] = 0;
 				}
 			}
 			else 
@@ -877,10 +916,47 @@ public FM_UpdateClientData_Post(id, weapons, cd)
 		static Float:fCurSpeed = 0.0;
 		get_cd(cd, CD_MaxSpeed, fCurSpeed);
 
-		if (fCurSpeed != g_fMaxSpeedOld[id] && fCurSpeed != g_fMaxSpeed[id])
+		// reset default
+		if (fCurSpeed == 0.0)
+			fCurSpeed = 900.0;
+		if (fCurSpeed == 1.0)
+			fCurSpeed = 230.0;
+
+		if (fCurSpeed != 1.0 && fCurSpeed != g_fSpeedHistory[id][0] && 
+			fCurSpeed != g_fSpeedHistory[id][1] && 
+			fCurSpeed != g_fSpeedHistory[id][2])
 		{
-			g_fMaxSpeedOld[id] = g_fMaxSpeed[id];
-			g_fMaxSpeed[id] = fCurSpeed;
+			g_fSpeedHistory[id][0] = g_fSpeedHistory[id][1];
+			g_fSpeedHistory[id][1] = g_fSpeedHistory[id][2];
+			g_fSpeedHistory[id][2] = fCurSpeed;
+		}
+
+	
+		if (fCurSpeed > 400.0)
+		{
+			g_fSpeedHistoryTime[id] = get_gametime();
+		}
+		else
+		{
+			if (g_fSpeedHistoryTime[id] > 0.0 && get_gametime() - g_fSpeedHistoryTime[id] > 5.0)
+			{
+				g_fSpeedHistoryTime[id] = 0.0;
+
+				if (g_fSpeedHistory[id][0] > 400.0)
+				{
+					g_fSpeedHistory[id][0] = 400.0;
+				}
+
+				if (g_fSpeedHistory[id][1] > 400.0)
+				{
+					g_fSpeedHistory[id][1] = 400.0;
+				}
+
+				if (g_fSpeedHistory[id][2] > 400.0)
+				{
+					g_fSpeedHistory[id][2] = 400.0;
+				}
+			}
 		}
 	}
 
