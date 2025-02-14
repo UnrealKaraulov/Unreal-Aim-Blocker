@@ -8,7 +8,7 @@
 #define _easy_cfg_internal
 #include <easy_cfg>
 
-new const PLUGIN_VERSION[] = "2.21";
+new const PLUGIN_VERSION[] = "2.30";
 
 #pragma ctrlchar '\'
 
@@ -27,14 +27,21 @@ new g_iForcecamera = 0;
 new g_iFadetoblack = 0;
 new g_iVipFlags = -2;
 new g_iBlockScoreSendDelay = 0;
+new g_iMaxSpeedWarns = 0;
+new g_iMaxMovementWarns = 0;
 
-new g_iButtons[MAX_PLAYERS + 1] = {0, ...};
+new g_iButtons[MAX_PLAYERS + 1][2];
 //new g_iButtons_old[MAX_PLAYERS + 1] = {0, ...};
 new g_iCmdCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iCmdMsecCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iBlockMove[MAX_PLAYERS + 1] = {0, ...};
 new g_iStepCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iScoreSendCounter[MAX_PLAYERS + 1] = {0, ...};
+new g_iSpeedHackWarns[MAX_PLAYERS + 1] = {0, ...};
+new g_iMoveHackWarns[MAX_PLAYERS + 1] = {0, ...};
+
+new g_sSpeedHackBanString[256] = "amx_ban #[userid] 1000 'Speedhack detected'";
+new g_sBadMovementBanString[256] = "amx_ban #[userid] 1000 'MovementHack detected'";
 
 new bool:g_bShowDef = false;
 new bool:g_bBlockScoreAttr = true;
@@ -52,9 +59,15 @@ new bool:g_bRadarFix[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bUserBot[MAX_PLAYERS + 1] = {false, ...};
 new bool:g_bCvarChecking[MAX_PLAYERS + 1] = {false, ...};
 
+new Float:g_fSpeedWarnTime = 1.0;
+new Float:g_fMoveWarnTime = 0.25;
+
 new Float:g_fRadarStayTime = 0.45;
 new Float:g_fRadarDeadTime = 0.05;
-new Float:g_fSpeedHackTime = 0.23;
+new Float:g_fSpeedHackTime = 0.20;
+
+new Float:g_fSpeedHackWarnTime[MAX_PLAYERS + 1] = {0.0, ...};
+new Float:g_fMovementWarnTime[MAX_PLAYERS + 1] = {0.0, ...};
 
 new Float:g_fOldStepVol[MAX_PLAYERS + 1] = {0.0, ...};
 new Float:g_fStepTime[MAX_PLAYERS + 1] = {0.0, ...};
@@ -130,9 +143,17 @@ public plugin_init()
 	new flags[64] = "";
 	cfg_read_str("general", "vip_flags", flags, flags, charsmax(flags));
 
+	cfg_read_str("general", "block_bad_cmd_banstr", g_sBadMovementBanString, g_sBadMovementBanString, charsmax(g_sBadMovementBanString));
+	cfg_read_int("general", "block_bad_cmd_warncount", g_iMaxMovementWarns, g_iMaxMovementWarns);
+	cfg_read_flt("general", "block_bad_cmd_warntime", g_fMoveWarnTime, g_fMoveWarnTime);
+	
+	cfg_read_str("general", "block_speedhack_banstr", g_sSpeedHackBanString, g_sSpeedHackBanString, charsmax(g_sSpeedHackBanString));
+	cfg_read_int("general", "block_speedhack_warncount", g_iMaxSpeedWarns, g_iMaxSpeedWarns);
+	cfg_read_flt("general", "block_speedhack_warntime", g_fSpeedWarnTime, g_fSpeedWarnTime);
+	
 	// next block code for check readwrite access to cfg
 	new bool:test_read_write_cfg = !g_bBlockBadCmd;
-
+	
 	cfg_write_bool("general","block_bad_cmd", test_read_write_cfg);
 	cfg_read_bool("general","block_bad_cmd", test_read_write_cfg, test_read_write_cfg);
 	cfg_write_bool("general","block_bad_cmd", g_bBlockBadCmd);
@@ -144,15 +165,15 @@ public plugin_init()
 		return;
 	}
 
-	if (g_fSpeedHackTime < 0.1)
+	if (g_fSpeedHackTime < 0.05)
 	{
-		g_fSpeedHackTime = 0.1;
+		g_fSpeedHackTime = 0.05;
 		cfg_write_flt("general","block_speedhack_time",g_fSpeedHackTime);
 	}
 
-	if (g_fSpeedHackTime > 0.28)
+	if (g_fSpeedHackTime > 0.26)
 	{
-		g_fSpeedHackTime = 0.28;
+		g_fSpeedHackTime = 0.26;
 		cfg_write_flt("general","block_speedhack_time",g_fSpeedHackTime);
 	}
 	
@@ -195,17 +216,17 @@ public plugin_init()
 		}
 	}
 	
-	if (g_iAimBlockMethod == 1 || g_iAimBlockMethod == 3)
+	if (g_iAimBlockMethod == 1 || g_iAimBlockMethod == 3 || g_iAimBlockMethod == 5)
 	{	
 		RegisterHookChain(RG_PM_Move, "PM_Move_Post", .post = true);
 	}
 
-	if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 3 || g_bBlockBadCmd || g_bBlockSpeedHack)
+	if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 5 || g_bBlockBadCmd || g_bBlockSpeedHack)
 	{
 		RegisterHookChain(RG_PM_Move, "PM_Move_Pre", .post = false);
 	}
 	
-	if (g_bBlockBadCmd || g_bBlockScoreAttr || g_iAimBlockMethod == 1 || g_iAimBlockMethod == 3)
+	if (g_bBlockBadCmd || g_bBlockScoreAttr || g_iAimBlockMethod == 1 || g_iAimBlockMethod == 3 || g_iAimBlockMethod == 5)
 	{
 		register_forward(FM_CmdStart, "FM_CmdStart_Pre", ._post = false);
 	}
@@ -215,12 +236,12 @@ public plugin_init()
 		register_forward(FM_CmdStart, "FM_CmdStart_Post", ._post = true);
 	}
 
-	if (g_bBlockBadCmd || g_iAimBlockMethod == 3)
+	if (g_bBlockBadCmd || g_iAimBlockMethod == 5)
 	{
 		register_forward(FM_UpdateClientData, "FM_UpdateClientData_Post", ._post = true);
 	}
 
-	if (g_iAimBlockMethod == 1 || g_iAimBlockMethod == 3)
+	if (g_iAimBlockMethod == 1 || g_iAimBlockMethod == 3 || g_iAimBlockMethod == 5)
 	{	
 		cfg_set_path("reaimdetector");
 
@@ -255,7 +276,7 @@ public plugin_init()
 		RegisterHookChain(RG_PM_PlayStepSound, "PM_PlayStepSound_Pre", .post = false);
 	}
 
-	if (g_bBlockBackTrack || g_iAimBlockMethod == 3)
+	if (g_bBlockBackTrack || g_iAimBlockMethod == 5)
 	{
 		register_forward(FM_AddToFullPack, "AddToFullPack_Post", ._post = true);
 	}
@@ -267,9 +288,12 @@ public plugin_init()
 	
 	log_amx("AimBlocker [v%s] loaded!", PLUGIN_VERSION);
 	log_amx("Settings: ");
-	log_amx("  aim_block_method = %s",g_iAimBlockMethod == 0 ? "none" : g_iAimBlockMethod == 1 ? "[angle delay]" : g_iAimBlockMethod == 2 ? "[key delay]" : g_iAimBlockMethod == 3 ? "[2x angle delay] + [key delay] + [punch delay/rnd]" : "unknown");
+	log_amx("  aim_block_method = %s", g_iAimBlockMethod == 0 ? "none" : g_iAimBlockMethod == 1 ? "[angle delay]" : g_iAimBlockMethod == 2 ? "[key delay]" : g_iAimBlockMethod == 3 ? "[2x angle delay]": g_iAimBlockMethod == 4 ? "[2x key delay]" : g_iAimBlockMethod == 5 ? "[2x angle delay] + [key delay] + [punch delay/rnd]" : "unknown");
 	log_amx("  block_weapon_count = %i",iBlockWeaponCount);
 	log_amx("  block_bad_cmd = %i",g_bBlockBadCmd);
+	log_amx("  block_bad_cmd_banstr = %s", g_sBadMovementBanString);
+	log_amx("  block_bad_cmd_warncount = %i",g_iMaxMovementWarns);
+	log_amx("  block_bad_cmd_warntime = %f",g_fMoveWarnTime);
 	log_amx("  block_score = %i",g_bBlockScoreAttr);
 	log_amx("  block_score_attack = %i",g_bBlockScoreAttrAttack);
 	log_amx("  block_score_local_dead = %i",g_bBlockScoreLocalDead);
@@ -278,8 +302,36 @@ public plugin_init()
 	log_amx("  block_speedhack = %i (you can use 'hackdetector lite' instead)",g_bBlockSpeedHack);
 	log_amx("  block_speedhack_mouseduck = %i (also can block +duck mwheelup)",g_bBlockSpeedHackDuck);
 	log_amx("  block_speedhack_time = %f",g_fSpeedHackTime);
+	log_amx("  block_speedhack_banstr = %s", g_sSpeedHackBanString);
+	log_amx("  block_speedhack_warncount = %f",g_iMaxSpeedWarns);
+	log_amx("  block_speedhack_warntime = %f",g_fSpeedWarnTime);
 	log_amx("  block_backtrack = %i (not tested)",g_bBlockBackTrack);
 	log_amx("  VIP TAB flags: %s [bin %X]",flags, g_iVipFlags == -2 ? 0 : g_iVipFlags);
+}
+
+public BanUserWithReason(const id, const reason[])
+{
+	static banstr[256];
+	static userauth[64];
+	static userid[16];
+	static username[33];
+	static userip[16];
+	
+	formatex(userid, charsmax(userid), "%i", get_user_userid(id));
+	get_user_name(id, username, charsmax(username));
+	get_user_ip(id, userip, charsmax(userip), true);
+	get_user_authid(id, userauth, charsmax(userauth));
+	
+	copy(banstr,charsmax(banstr), reason);
+	
+	replace_all(banstr,charsmax(banstr),"[userid]",userid);
+	replace_all(banstr,charsmax(banstr),"[username]",username);
+	replace_all(banstr,charsmax(banstr),"[ip]",userip);
+	replace_all(banstr,charsmax(banstr),"[steamid]",userauth);
+	
+	server_cmd("%s", banstr);
+	
+	log_to_file("unreal_aim_blocker.log", "[BAN] %s", banstr);
 }
 
 public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet) 
@@ -287,6 +339,15 @@ public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet)
 	if(!player || host > MaxClients || ent > MaxClients)
 		return FMRES_IGNORED;
 
+	if (g_iAimBlockMethod == 5 && ent == host)
+	{
+		static Float:vAngles[3];
+		get_es(es_handle, ES_Angles, vAngles);
+		vAngles[0] += random_float(-0.5, 0.5);
+		set_es(es_handle, ES_Angles, vAngles);
+	}
+	
+	// TODO replace to new REAPI version methods
 	if (g_bBlockBackTrack)
 	{
 		static Float:animtime = 0.0;
@@ -294,13 +355,7 @@ public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet)
 		animtime *= 1.2;
 		set_es(es_handle, ES_AnimTime, animtime);
 	}
-	if (g_iAimBlockMethod == 3 && ent == host)
-	{
-		static Float:vAngles[3];
-		get_es(es_handle, ES_Angles, vAngles);
-		vAngles[0] += random_float(0.1, 0.5);
-		set_es(es_handle, ES_Angles, vAngles);
-	}
+	
 	return FMRES_IGNORED;
 }
 
@@ -318,42 +373,59 @@ public PM_PlayStepSound_Pre(step, Float:vol, id)
 	{
 		get_entvar(id, var_origin, g_vOldStepOrigin[id]);
 	}
+	
+	new Float:fGameTime = get_gametime();
 
-	if (get_gametime() - g_fStepTime[id] < g_fSpeedHackTime && g_fOldStepVol[id] == vol)
+	if (fGameTime - g_fStepTime[id] < g_fSpeedHackTime && g_fOldStepVol[id] == vol)
 	{
 		if (g_iStepCounter[id] > 2)
 		{
-			//log_amx("[%i] SpeedHack detected [%f] = %f!", id, get_gametime() - g_fStepTime[id],vol);
+			/*if (fGameTime - g_fSpeedHackWarnTime[id] < g_fSpeedWarnTime)
+			{
+				g_iSpeedHackWarns[id]++;
+			}*/
+			g_iSpeedHackWarns[id]++;
+			if (g_iMaxSpeedWarns > 0 && g_iSpeedHackWarns[id] > g_iMaxSpeedWarns)
+			{
+				g_iSpeedHackWarns[id] = 0;
+				if (strlen(g_sSpeedHackBanString) > 0)
+				{
+					BanUserWithReason(id, g_sSpeedHackBanString);
+				}
+				force_drop_client_reason(id, "SPEEDHACK DETECTED");
+			}
+			g_fSpeedHackWarnTime[id] = fGameTime;
+			//log_amx("[%i] SpeedHack detected [%f] = %f!", id, fGameTime - g_fStepTime[id],vol);
 			set_entvar(id, var_origin, g_vOldStepOrigin[id]);
 		}
 		else 
 		{
-			//log_amx("[%i] SpeedHack warn [%f] = %f!", id,get_gametime() - g_fStepTime[id],vol);
+			//log_amx("[%i] SpeedHack warn [%f] = %f!", id,fGameTime - g_fStepTime[id],vol);
+			if(g_iStepCounter[id] < 0)
+				g_iStepCounter[id] = 0;
 			g_iStepCounter[id]++;
 		}
 	}
 	else 
 	{
-		//log_amx("[%i] SpeedHack clear [%f] = %f!", id,get_gametime() - g_fStepTime[id],vol);
-		if (g_iStepCounter[id] > 0)
+		if (fGameTime - g_fSpeedHackWarnTime[id] > g_fSpeedWarnTime)
 		{
-			g_iStepCounter[id]--;
-
-			if (g_iStepCounter[id] == 0)
+			if (g_iSpeedHackWarns[id] > 0)
 			{
-				get_entvar(id, var_origin, g_vOldStepOrigin[id]);
-				g_fStepTime[id] = 0.0;
-				return HC_CONTINUE;
+				g_iSpeedHackWarns[id]--;
 			}
 		}
-		else 
+		g_iStepCounter[id]--;
+		if (g_iStepCounter[id] <= 0)
 		{
 			get_entvar(id, var_origin, g_vOldStepOrigin[id]);
+			g_fStepTime[id] = 0.0;
+			return HC_CONTINUE;
 		}
 	}
 
 	g_fOldStepVol[id] = vol;
-	g_fStepTime[id] = get_gametime();
+	g_fStepTime[id] = fGameTime;
 	return HC_CONTINUE;
 }
 
@@ -366,7 +438,7 @@ public clear_client(id)
 	g_vAngles_cur2[id][0] = g_vAngles_cur2[id][1] = g_vAngles_cur2[id][2] = 0.0;
 	g_vPunchAngle[id][0] = g_vPunchAngle[id][1] = g_vPunchAngle[id][2] = 0.0;
 	g_vOldStepOrigin[id][0] = g_vOldStepOrigin[id][1] = g_vOldStepOrigin[id][2] = 0.0;
-	g_iButtons[id] = /*g_iButtons_old[id] =*/ 0;
+	g_iButtons[id][0] = g_iButtons[id][1] = 0;
 	g_iCmdCounter[id] = 0;
 	g_iCmdMsecCounter[id] = 0;
 	g_iBlockMove[id] = 0;
@@ -375,6 +447,10 @@ public clear_client(id)
 	g_fStepTime[id] = 0.0;
 	g_iStepCounter[id] = 0;
 	g_fRadarUpdateTime[id] = 0.0;
+	g_fSpeedHackWarnTime[id] = 0.0;
+	g_fMovementWarnTime[id] = 0.0;
+	g_iSpeedHackWarns[id] = 0;
+	g_iMoveHackWarns[id] = 0;
 }
 
 public client_disconnected(id)
@@ -393,6 +469,7 @@ public client_putinserver(id)
 	g_vCL_movespeedkey[id] = 0.52;
 	g_vCL_forwardspeed[id] = 400.0;
 	g_fSpeedHistory[id][0] = g_fSpeedHistory[id][1] = g_fSpeedHistory[id][2] = 200.0;
+	g_iButtons[id][0] = g_iButtons[id][1] = 0;
 	g_bUserBot[id] = is_user_bot(id) || is_user_hltv(id);
 	if (g_bBlockBadCmd && !g_bUserBot[id])
 	{
@@ -478,7 +555,7 @@ public PM_Move_Post(const id)
 			g_vAngles_cur1[id][1] = vTmpAngles[1];
 			g_vAngles_cur1[id][2] = vTmpAngles[2];
 		}
-		else if (g_iAimBlockMethod == 3)
+		else if (g_iAimBlockMethod == 3 || g_iAimBlockMethod == 5)
 		{
 			get_pmove(pm_oldangles, vTmpAngles);
 			set_pmove(pm_oldangles, g_vAngles_old1[id]);
@@ -506,17 +583,24 @@ public PM_Move_Pre(const id)
 	static Float:vTmpAngles[3];
 	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
 	{	
-		if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 3 || (g_bBlockSpeedHack && !g_bBlockSpeedHackDuck))
+		if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 5 || (g_bBlockSpeedHack && !g_bBlockSpeedHackDuck))
 		{
 			new cmd = get_pmove(pm_cmd);
-			if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 3)
+			if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 4 || g_iAimBlockMethod == 5)
 				set_ucmd(cmd,ucmd_buttons, get_entvar(id, var_button));
-			if (g_bBlockSpeedHack && !g_bBlockSpeedHackDuck)
+			if (g_bBlockSpeedHack)
 			{
 				if (get_ucmd(cmd, ucmd_buttons) & IN_DUCK)
 				{
-					g_iStepCounter[id] = 0;
-					g_fOldStepVol[id] = 0.0;
+					if (!g_bBlockSpeedHackDuck)
+					{
+						g_iStepCounter[id] = 0;
+						g_fOldStepVol[id] = 0.0;
+					}
+					else 
+					{
+						g_iStepCounter[id]--;
+					}
 				}
 			}
 		}
@@ -541,6 +625,21 @@ public PM_Move_Pre(const id)
 				vTmpAngles[0] /= mult;
 				vTmpAngles[1] /= mult;
 				set_entvar(id, var_velocity, vTmpAngles);
+				
+				if (g_iBlockMove[id] == 2 || g_iBlockMove[id] > g_iMoveHackWarns[id])
+				{
+					g_iMoveHackWarns[id]++;
+					if (g_iMaxMovementWarns && g_iMoveHackWarns[id] > g_iMaxMovementWarns)
+					{
+						g_iMoveHackWarns[id] = 0;
+						if (strlen(g_sBadMovementBanString) > 0)
+						{
+							BanUserWithReason(id, g_sBadMovementBanString);
+						}
+						force_drop_client_reason(id, "MOVEMENT HACK DETECTED");
+					}
+					g_fMovementWarnTime[id] = get_gametime();
+				}
 			}
 		}
 	}
@@ -548,12 +647,23 @@ public PM_Move_Pre(const id)
 	return HC_CONTINUE;
 }
 
-public force_drop_client_bad_fps(id)
+new drop_reason[MAX_PLAYERS + 1][256];
+
+public force_drop_client(id)
 {
 	if (is_user_connected(id))
 	{
 		clear_client(id);
-		rh_drop_client(id, "BAD FPS");
+		rh_drop_client(id, drop_reason[id]);
+	}
+}
+
+public force_drop_client_reason(id, const reason[])
+{
+	if (is_user_connected(id))
+	{
+		copy(drop_reason[id],charsmax(drop_reason[]),reason);
+		set_task(0.01,"force_drop_client",id)
 	}
 }
 
@@ -565,6 +675,7 @@ public FM_CmdStart_Pre(id, handle)
 {
 	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
 	{	
+		new Float:fGameTime = get_gametime();
 		new btn = get_uc(handle, UC_Buttons);
 		if (g_bBlockBadCmd)
 		{
@@ -572,8 +683,7 @@ public FM_CmdStart_Pre(id, handle)
 
 			if (iMsec < 1)
 			{
-				if (!task_exists(id))
-					set_task(0.01,"force_drop_client_bad_fps",id);
+				force_drop_client_reason(id, "BAD FPS");
 				return FMRES_SUPERCEDE;
 			}
 
@@ -646,7 +756,10 @@ public FM_CmdStart_Pre(id, handle)
 						{
 							g_iBlockMove[id] = 0;
 						}
-						//log_amx("[%i] [warn:%i] [btn:%X] m1 = %.2f, m2 = %.2f, m3 = %.2f, m4 = %.2f, max1 = %.2f, max2 = %.2f, max3 = %.2f, side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], btn, fmov,fmov2,fmov3,fmov4,fMaxMov1,fMaxMov2,fMaxMov3,fSide,fForward,fUp);
+						if (g_iBlockMove[id] > 0)
+						{
+							log_amx("[%i] [warn:%i] [btn:%X] m1 = %.2f, m2 = %.2f, m3 = %.2f, m4 = %.2f, max1 = %.2f, max2 = %.2f, max3 = %.2f, side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], btn, fmov,fmov2,fmov3,fmov4,fMaxMov1,fMaxMov2,fMaxMov3,fSide,fForward,fUp);
+						}
 					}
 				}
 			}
@@ -655,6 +768,26 @@ public FM_CmdStart_Pre(id, handle)
 				g_iBlockMove[id] = 0;
 			}
 			
+			if (g_iMaxMovementWarns > 0 && g_iBlockMove[id] >= 1 && g_iBlockMove[id] <= 3)
+			{
+				client_cmd(id, "-strafe");
+			}
+			
+			if (g_iBlockMove[id] > 0)
+			{
+				log_amx("[%i] [warn:%i] [btn:%X] side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], btn, fSide,fForward,fUp);
+			}
+			
+			if (g_iBlockMove[id] == 0)
+			{
+				if (fGameTime - g_fMovementWarnTime[id] > g_fMoveWarnTime)
+				{
+					if (g_iMoveHackWarns[id] > 0)
+					{
+						g_iMoveHackWarns[id]--;
+					}
+				}
+			}
 			/*if (g_iBlockMove[id] > 0)
 				log_amx("[%i] [warn:%i]", id, g_iBlockMove[id]);*/
 		}
@@ -662,7 +795,7 @@ public FM_CmdStart_Pre(id, handle)
 		if (g_bBlockScoreAttr)
 		{
 			// Use score attrib message [like in softblocker]
-			new bool:oldScore = (g_iButtons[id] & IN_SCORE) > 0;
+			new bool:oldScore = (g_iButtons[id][1] & IN_SCORE) > 0;
 			g_bCurScore[id] = (btn & IN_SCORE) > 0;
 
 			if (g_bBlockScoreAttrAttack)
@@ -693,21 +826,21 @@ public FM_CmdStart_Pre(id, handle)
 						message_end();
 					}
 					else 
-					{
-						if (g_bRadarFix[id] && floatabs(get_gametime() - g_fRadarUpdateTime[id]) > g_fRadarDeadTime)
+					{						
+						if (g_bRadarFix[id] && floatabs(fGameTime - g_fRadarUpdateTime[id]) > g_fRadarDeadTime)
 						{
 							g_bRadarFix[id] = !g_bRadarFix[id];
 							UpdateUserScoreForPlayer(id, id);
-							g_fRadarUpdateTime[id] = get_gametime();
+							g_fRadarUpdateTime[id] = fGameTime;
 						}
-						else if (!g_bRadarFix[id] && floatabs(get_gametime() - g_fRadarUpdateTime[id]) > g_fRadarStayTime)
+						else if (!g_bRadarFix[id] && floatabs(fGameTime - g_fRadarUpdateTime[id]) > g_fRadarStayTime)
 						{
 							g_bRadarFix[id] = !g_bRadarFix[id];
 							message_begin(MSG_ONE_UNRELIABLE, g_iScoreAttribMsg, _, id);
 							write_byte(id);
 							write_byte(SCORE_STATUS_DEAD);
 							message_end();
-							g_fRadarUpdateTime[id] = get_gametime();
+							g_fRadarUpdateTime[id] = fGameTime;
 						}
 					}
 				}
@@ -833,15 +966,13 @@ public FM_CmdStart_Pre(id, handle)
 			}
 		}
 
-		if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 3)
+		if (g_iAimBlockMethod == 2 || g_iAimBlockMethod == 4 || g_iAimBlockMethod == 5)
 		{
-			/*new tmpbutton = get_entvar(id, var_oldbuttons);
-			set_entvar(id, var_oldbuttons, g_iButtons_old[id]);
-			g_iButtons_old[id] = tmpbutton;*/
-			set_uc(handle, UC_Buttons, g_iButtons[id]);
+			set_uc(handle, UC_Buttons, g_iButtons[id][g_iAimBlockMethod == 4 ? 0 : 1]);
 		}
 		
-		g_iButtons[id] = btn;
+		g_iButtons[id][0] = g_iButtons[id][1];
+		g_iButtons[id][1] = btn;
 	}
 	return FMRES_IGNORED;
 }
@@ -913,6 +1044,7 @@ public FM_UpdateClientData_Post(id, weapons, cd)
 
 	if (g_bBlockBadCmd)
 	{
+		new Float:fGameTime = get_gametime();
 		static Float:fCurSpeed = 0.0;
 		get_cd(cd, CD_MaxSpeed, fCurSpeed);
 
@@ -934,11 +1066,11 @@ public FM_UpdateClientData_Post(id, weapons, cd)
 	
 		if (fCurSpeed > 400.0)
 		{
-			g_fSpeedHistoryTime[id] = get_gametime();
+			g_fSpeedHistoryTime[id] = fGameTime;
 		}
 		else
 		{
-			if (g_fSpeedHistoryTime[id] > 0.0 && get_gametime() - g_fSpeedHistoryTime[id] > 5.0)
+			if (g_fSpeedHistoryTime[id] > 0.0 && fGameTime - g_fSpeedHistoryTime[id] > 5.0)
 			{
 				g_fSpeedHistoryTime[id] = 0.0;
 
@@ -960,7 +1092,7 @@ public FM_UpdateClientData_Post(id, weapons, cd)
 		}
 	}
 
-	if (g_iAimBlockMethod == 3)
+	if (g_iAimBlockMethod == 5)
 	{
 		static Float:vAngles[3];
 		static Float:vVelocity[3];
