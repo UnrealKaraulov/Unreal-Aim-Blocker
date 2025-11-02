@@ -758,7 +758,7 @@ public FM_CmdStart_Pre(id, handle)
 						}
 						if (g_iBlockMove[id] > 0)
 						{
-							log_amx("[%i] [warn:%i] [btn:%X] m1 = %.2f, m2 = %.2f, m3 = %.2f, m4 = %.2f, max1 = %.2f, max2 = %.2f, max3 = %.2f, side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], btn, fmov,fmov2,fmov3,fmov4,fMaxMov1,fMaxMov2,fMaxMov3,fSide,fForward,fUp);
+							//log_amx("[%i] [warn:%i] [btn:%X] m1 = %.2f, m2 = %.2f, m3 = %.2f, m4 = %.2f, max1 = %.2f, max2 = %.2f, max3 = %.2f, side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], btn, fmov,fmov2,fmov3,fmov4,fMaxMov1,fMaxMov2,fMaxMov3,fSide,fForward,fUp);
 						}
 					}
 				}
@@ -775,7 +775,7 @@ public FM_CmdStart_Pre(id, handle)
 			
 			if (g_iBlockMove[id] > 0)
 			{
-				log_amx("[%i] [warn:%i] [btn:%X] side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], btn, fSide,fForward,fUp);
+				//log_amx("[%i] [warn:%i] [btn:%X] side = %.2f, fwd = %.2f, up = %.2f", id, g_iBlockMove[id], btn, fSide,fForward,fUp);
 			}
 			
 			if (g_iBlockMove[id] == 0)
