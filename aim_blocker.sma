@@ -8,7 +8,7 @@
 #define _easy_cfg_internal
 #include <easy_cfg>
 
-new const PLUGIN_VERSION[] = "2.30";
+new const PLUGIN_VERSION[] = "2.31";
 
 #pragma ctrlchar '\'
 
@@ -32,7 +32,7 @@ new g_iMaxMovementWarns = 0;
 
 new g_iButtons[MAX_PLAYERS + 1][2];
 //new g_iButtons_old[MAX_PLAYERS + 1] = {0, ...};
-new g_iCmdCounter[MAX_PLAYERS + 1] = {0, ...};
+new g_iFpsCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iCmdMsecCounter[MAX_PLAYERS + 1] = {0, ...};
 new g_iBlockMove[MAX_PLAYERS + 1] = {0, ...};
 new g_iStepCounter[MAX_PLAYERS + 1] = {0, ...};
@@ -439,7 +439,7 @@ public clear_client(id)
 	g_vPunchAngle[id][0] = g_vPunchAngle[id][1] = g_vPunchAngle[id][2] = 0.0;
 	g_vOldStepOrigin[id][0] = g_vOldStepOrigin[id][1] = g_vOldStepOrigin[id][2] = 0.0;
 	g_iButtons[id][0] = g_iButtons[id][1] = 0;
-	g_iCmdCounter[id] = 0;
+	g_iFpsCounter[id] = 0;
 	g_iCmdMsecCounter[id] = 0;
 	g_iBlockMove[id] = 0;
 	g_bUserBot[id] = false;
@@ -663,7 +663,7 @@ public force_drop_client_reason(id, const reason[])
 	if (is_user_connected(id))
 	{
 		copy(drop_reason[id],charsmax(drop_reason[]),reason);
-		set_task(0.01,"force_drop_client",id)
+		set_task(0.01,"force_drop_client",id);
 	}
 }
 
@@ -681,10 +681,19 @@ public FM_CmdStart_Pre(id, handle)
 		{
 			new iMsec = get_uc(handle, UC_Msec);
 
-			if (iMsec < 1)
+			if (iMsec == 0)
 			{
-				force_drop_client_reason(id, "BAD FPS");
-				return FMRES_SUPERCEDE;
+				g_iFpsCounter[id]++;
+				if (g_iFpsCounter[id] > 5)
+				{
+					g_iFpsCounter[id] = -999;
+					force_drop_client_reason(id, "BAD FPS");
+					return FMRES_SUPERCEDE;
+				}
+			}
+			else 
+			{
+				g_iFpsCounter[id] = 0;
 			}
 
 			new Float:fForward = 0.0;
@@ -732,7 +741,7 @@ public FM_CmdStart_Pre(id, handle)
 						if (floatabs(fmov - fMaxMov1) > 5.0 && floatabs(fmov2 - fMaxMov1) > 5.0 &&
 							floatabs(fmov - fMaxMov2) > 5.0 && floatabs(fmov2 - fMaxMov2) > 5.0 &&
 							floatabs(fmov - fMaxMov3) > 5.0 && floatabs(fmov2 - fMaxMov3) > 5.0 &&
-							fmov != MAGIC_SPEED && fmov2 != MAGIC_SPEED)
+							floatabs(fmov - MAGIC_SPEED) > 0.01 && floatabs(fmov2 - MAGIC_SPEED) > 0.01)
 						{
 							if (g_iBlockMove[id] == 0)
 							{
