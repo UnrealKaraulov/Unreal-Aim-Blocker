@@ -156,6 +156,7 @@ public plugin_init()
 	cfg_read_str( "general", "block_bad_fps_banstr", g_sBadFpsBanString, g_sBadFpsBanString, charsmax(g_sBadFpsBanString));
 	cfg_read_int( "general", "block_bad_fps_warncount", g_iMaxBadFpsWarns, g_iMaxBadFpsWarns);
 	cfg_read_flt( "general", "block_bad_fps_warntime", g_fFakeWarnTime, g_fFakeWarnTime);
+	
 
 	cfg_read_bool("general","block_speedhack", g_bBlockSpeedHack, g_bBlockSpeedHack);
 	cfg_read_bool("general","block_speedhack_mouseduck", g_bBlockSpeedHackDuck, g_bBlockSpeedHackDuck);
@@ -326,6 +327,12 @@ public plugin_init()
 	log_amx("  block_speedhack_warncount = %f",g_iMaxSpeedWarns);
 	log_amx("  block_speedhack_warntime = %f",g_fSpeedWarnTime);
 	log_amx("  block_backtrack = %i (not tested)",g_bBlockBackTrack);
+	
+	log_amx("  block_bad_fps = %s", g_bBlockBadFps ? "enabled" : "disabled");
+	log_amx("  block_bad_fps_banstr = %s", g_sBadFpsBanString);
+	log_amx("  block_bad_fps_warncount = %i",g_iMaxBadFpsWarns);
+	log_amx("  block_bad_fps_warntime = %i",g_fFakeWarnTime);
+	
 	log_amx("  VIP TAB flags: %s [bin %X]",flags, g_iVipFlags == -2 ? 0 : g_iVipFlags);
 }
 
