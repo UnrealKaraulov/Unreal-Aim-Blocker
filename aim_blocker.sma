@@ -8,7 +8,7 @@
 #define _easy_cfg_internal
 #include <easy_cfg>
 
-new const PLUGIN_VERSION[] = "2.40";
+new const PLUGIN_VERSION[] = "2.41";
 
 #pragma ctrlchar '\'
 
@@ -56,6 +56,7 @@ new g_iMaxBadFpsWarns = 5;
 new Float:g_fFakeWarnTime = 0.25;
 new Float:g_fBadFpsLastTime[MAX_PLAYERS + 1] = {0.0, ...};
 new g_iFpsCounter[MAX_PLAYERS + 1] = {0, ...};
+new const g_iBadFpsThreshold = 3;
 
 new bool:g_bShowDef = false;
 new bool:g_bBlockScoreAttr = true;
@@ -250,7 +251,7 @@ public plugin_init()
 		register_forward(FM_CmdStart, "FM_CmdStart_Pre", ._post = false);
 	}
 
-	if (g_bCustomSeedWhenMoving)
+	if (g_bCustomSeedWhenMoving || g_iMaxBadFpsWarns > 0)
 	{
 		register_forward(FM_CmdStart, "FM_CmdStart_Post", ._post = true);
 	}
@@ -734,46 +735,6 @@ public FM_CmdStart_Pre(id, handle)
 		new btn = get_uc(handle, UC_Buttons);
 		if (g_bBlockBadCmd)
 		{
-			new iMsec = get_uc(handle, UC_Msec);
-
-			if (iMsec == 0)
-			{
-				if (is_user_alive(id))
-				{
-					if (fGameTime - g_fBadFpsLastTime[id] > g_fFakeWarnTime)
-					{
-						g_iFpsCounter[id]++; 
-						g_fBadFpsLastTime[id] = fGameTime;
-						if (g_iMaxBadFpsWarns > 0 && g_iFpsCounter[id] > g_iMaxBadFpsWarns)
-						{
-							g_iFpsCounter[id] = 0;
-							
-							if (g_sBadFpsBanString[0] == EOS)
-							{
-								force_drop_client_reason(id, "Fake commands");
-							}
-							else
-							{
-								BanUserWithReason(id, g_sBadFpsBanString);
-							}
-						}
-					}
-				}
-				else
-				{
-					g_iFpsCounter[id] = 0;
-				}
-			}
-			else 
-			{
-				if (g_iFpsCounter[id] > 0 && (fGameTime - g_fBadFpsLastTime[id] > g_fFakeWarnTime / 2.0))
-				{
-					g_iFpsCounter[id]--; 
-					g_fBadFpsLastTime[id] = fGameTime;
-				}
-			}
-			
-
 			new Float:fForward = 0.0;
 			get_uc(handle, UC_ForwardMove, fForward);
 			new Float:fSide = 0.0;
@@ -1064,7 +1025,7 @@ public FM_CmdStart_Pre(id, handle)
 	return FMRES_IGNORED;
 }
 
-public FM_CmdStart_Post(id)
+public FM_CmdStart_Post(id, handle)
 {
 	static Float:vVelocity[3];
 	get_entvar(id, var_velocity, vVelocity);
@@ -1074,6 +1035,56 @@ public FM_CmdStart_Post(id)
 	{
 		set_member(id, random_seed, random_num(0, 2147483646));
 	}
+	
+	new iMsec = get_uc(handle, UC_Msec);
+	new Float:fGameTime = get_gametime();
+	
+	if (iMsec == 0)
+	{
+		if (is_user_alive(id))
+		{
+			g_iCmdMsecCounter[id]++;
+			if (g_iCmdMsecCounter[id] >= g_iBadFpsThreshold)
+			{
+				if (fGameTime - g_fBadFpsLastTime[id] > g_fFakeWarnTime)
+				{
+					g_iFpsCounter[id]++; 
+					g_fBadFpsLastTime[id] = fGameTime;
+					g_iCmdMsecCounter[id] = 0;
+				}
+				if (g_iMaxBadFpsWarns > 0 && g_iFpsCounter[id] > g_iMaxBadFpsWarns)
+				{
+					g_iFpsCounter[id] = 0;
+					g_iCmdMsecCounter[id] = 0;
+
+					if (g_sBadFpsBanString[0] == EOS)
+					{
+						force_drop_client_reason(id, "Fake commands");
+					}
+					else
+					{
+						BanUserWithReason(id, g_sBadFpsBanString);
+					}
+				}
+			}
+		}
+		else
+		{
+			g_iFpsCounter[id] = 0;
+			g_iCmdMsecCounter[id] = 0;
+		}
+	}
+	else 
+	{
+		g_iCmdMsecCounter[id] = 0;
+		if (g_iFpsCounter[id] > 0 && (fGameTime - g_fBadFpsLastTime[id] > 0.05))
+		{
+			g_iFpsCounter[id]--; 
+			g_fBadFpsLastTime[id] = fGameTime;
+		}
+	}
+	
+
 }
 
 // Use score attrib message [like in softblocker]
