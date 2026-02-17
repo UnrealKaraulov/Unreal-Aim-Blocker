@@ -12,7 +12,7 @@ new const PLUGIN_VERSION[] = "2.41";
 
 #pragma ctrlchar '\'
 
-new const config_version = 3;
+new const config_version = 4;
 
 new const DEFAULT_BLOCKWEAPON_LIST[][] = { "weapon_p228", "weapon_xm1014", "weapon_c4", "weapon_mac10", "weapon_elite", "weapon_fiveseven",
 									 "weapon_ump45", "weapon_galil", "weapon_mp5navy", "weapon_m249", "weapon_m3", "weapon_tmp", "weapon_deagle", "weapon_ak47", "weapon_p90" };
