@@ -8,7 +8,7 @@
 #define _easy_cfg_internal
 #include <easy_cfg>
 
-new const PLUGIN_VERSION[] = "2.41";
+new const PLUGIN_VERSION[] = "2.42";
 
 #pragma ctrlchar '\'
 
@@ -615,7 +615,6 @@ public PM_Move_Post(const id)
 			if (vPredAngles[0] < -89.0) vPredAngles[0] = -89.0;
 
 			set_pmove(pm_angles, vPredAngles);
-
 			get_pmove(pm_oldangles, vPredAngles);
 			
 			g_vAngles_old2[id][0] = g_vAngles_old1[id][0];
@@ -1048,7 +1047,7 @@ public FM_CmdStart_Post(id, handle)
 	
 	if (iMsec == 0)
 	{
-		if (is_user_alive(id))
+		if (g_bBlockBadFps && is_user_alive(id))
 		{
 			g_iCmdMsecCounter[id]++;
 			if (g_iCmdMsecCounter[id] >= g_iBadFpsThreshold)
