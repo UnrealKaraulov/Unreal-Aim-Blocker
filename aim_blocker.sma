@@ -8,7 +8,7 @@
 #define _easy_cfg_internal
 #include <easy_cfg>
 
-new const PLUGIN_VERSION[] = "2.42";
+new const PLUGIN_VERSION[] = "2.43";
 
 #pragma ctrlchar '\'
 
@@ -164,9 +164,6 @@ public plugin_init()
 	cfg_read_str("general", "block_speedhack_banstr", g_sSpeedHackBanString, g_sSpeedHackBanString, charsmax(g_sSpeedHackBanString));
 	cfg_read_int("general", "block_speedhack_warncount", g_iMaxSpeedWarns, g_iMaxSpeedWarns);
 	cfg_read_flt("general", "block_speedhack_warntime", g_fSpeedWarnTime, g_fSpeedWarnTime);
-	
-	
-	
 	
 	
 	new iBlockWeaponCount = 0;
@@ -357,6 +354,7 @@ public BanUserWithReason(const id, const reason[])
 	replace_all(banstr,charsmax(banstr),"[steamid]",userauth);
 	
 	server_cmd("%s", banstr);
+	server_exec();
 	
 	log_to_file("unreal_aim_blocker.log", "[BAN] %s", banstr);
 }
@@ -365,7 +363,7 @@ public AddToFullPack_Post(es_handle, e, ent, host, hostflags, bool:player, pSet)
 {
 	if(!player || host > MaxClients || ent > MaxClients)
 		return FMRES_IGNORED;
-
+		
 	// TODO replace to new REAPI version methods
 	if (g_bBlockBackTrack)
 	{
@@ -559,6 +557,7 @@ public plugin_end()
 public PM_Move_Post(const id)
 {
 	static Float:vTmpAngles[3];
+	
 	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
 	{	
 		if (g_iAimBlockMethod == 1)
@@ -731,7 +730,7 @@ new Float:MAGIC_SPEED = 200.0;
 
 public FM_CmdStart_Pre(id, handle)
 {
-	if (id > 0 && id <= MaxClients && !g_bUserBot[id])
+	if (id > 0 && id <= MaxClients && !g_bUserBot[id] && is_user_alive(id))
 	{	
 		if (g_bRandSeed[id])
 		{
@@ -750,23 +749,23 @@ public FM_CmdStart_Pre(id, handle)
 
 			if ( fForward != 0.0 || fSide != 0.0 || fUp != 0.0 )
 			{
-				if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT == 0 && fSide != 0.0)
+				if ((btn & IN_MOVERIGHT) == 0 && (btn & IN_MOVELEFT) == 0 && fSide != 0.0)
 				{
 					g_iBlockMove[id]++;
 				}
-				else if (btn & IN_FORWARD == 0 && btn & IN_BACK == 0 && fForward != 0.0)
+				else if ((btn & IN_FORWARD) == 0 && (btn & IN_BACK) == 0 && fForward != 0.0)
 				{
 					g_iBlockMove[id]++;
 				}
-				else if (btn & IN_MOVERIGHT != 0 && btn & IN_MOVELEFT == 0 && fSide < -1.0)
+				else if ((btn & IN_MOVERIGHT) != 0 && (btn & IN_MOVELEFT) == 0 && fSide < -1.0)
 				{
 					g_iBlockMove[id]++;
 				}
-				else if (btn & IN_MOVERIGHT == 0 && btn & IN_MOVELEFT != 0 && fSide > 1.0)
+				else if ((btn & IN_MOVERIGHT) == 0 && (btn & IN_MOVELEFT) != 0 && fSide > 1.0)
 				{
 					g_iBlockMove[id]++;
 				}
-				else if (btn & IN_FORWARD != 0 && btn & IN_BACK == 0 && fForward < -1.0)
+				else if ((btn & IN_FORWARD) != 0 && (btn & IN_BACK) == 0 && fForward < -1.0)
 				{
 					g_iBlockMove[id]++;
 				}
@@ -1052,17 +1051,15 @@ public FM_CmdStart_Post(id, handle)
 			g_iCmdMsecCounter[id]++;
 			if (g_iCmdMsecCounter[id] >= g_iBadFpsThreshold)
 			{
+				g_iCmdMsecCounter[id] = 0;
 				if (fGameTime - g_fBadFpsLastTime[id] > g_fFakeWarnTime)
 				{
 					g_iFpsCounter[id]++; 
 					g_fBadFpsLastTime[id] = fGameTime;
-					g_iCmdMsecCounter[id] = 0;
 				}
 				if (g_iMaxBadFpsWarns > 0 && g_iFpsCounter[id] > g_iMaxBadFpsWarns)
 				{
 					g_iFpsCounter[id] = 0;
-					g_iCmdMsecCounter[id] = 0;
-
 					if (g_sBadFpsBanString[0] == EOS)
 					{
 						force_drop_client_reason(id, "Fake commands");
@@ -1082,12 +1079,8 @@ public FM_CmdStart_Post(id, handle)
 	}
 	else 
 	{
+		g_iFpsCounter[id] = 0;
 		g_iCmdMsecCounter[id] = 0;
-		if (g_iFpsCounter[id] > 0 && (fGameTime - g_fBadFpsLastTime[id] > 0.05))
-		{
-			g_iFpsCounter[id]--; 
-			g_fBadFpsLastTime[id] = fGameTime;
-		}
 	}
 	
 
@@ -1101,9 +1094,9 @@ public ScoreAttrib_HOOK(msgid, dest, id)
 		return PLUGIN_CONTINUE;
 	}
 
+	new target = get_msg_arg_int(1);
 	if (!g_bCurScore[id])
 	{
-		new target = get_msg_arg_int(1);
 		if (target == id)
 		{
 			if (g_bBlockScoreLocalDead)
@@ -1115,7 +1108,7 @@ public ScoreAttrib_HOOK(msgid, dest, id)
 			}
 
 			new flags = get_msg_arg_int(2);
-			if (flags & SCORE_STATUS_VIP == 0  && (g_iVipFlags != -2 && get_user_flags(id) & g_iVipFlags))
+			if ((flags & SCORE_STATUS_VIP) == 0 && (g_iVipFlags != -2 && (get_user_flags(target) & g_iVipFlags) != 0))
 			{
 				set_msg_arg_int(2, ARG_BYTE, flags | SCORE_STATUS_VIP);
 			}
@@ -1124,7 +1117,7 @@ public ScoreAttrib_HOOK(msgid, dest, id)
 		else if (get_member(id, m_iTeam) == get_member(target, m_iTeam))
 		{
 			new flags = get_msg_arg_int(2);
-			if (flags & SCORE_STATUS_VIP == 0  && (g_iVipFlags != -2 && get_user_flags(id) & g_iVipFlags))
+			if ((flags & SCORE_STATUS_VIP) == 0 && (g_iVipFlags != -2 && (get_user_flags(target) & g_iVipFlags) != 0))
 			{
 				set_msg_arg_int(2, ARG_BYTE, flags | SCORE_STATUS_VIP);
 			}
@@ -1134,7 +1127,7 @@ public ScoreAttrib_HOOK(msgid, dest, id)
 	}
 
 	new flags = get_msg_arg_int(2);
-	if (flags & SCORE_STATUS_VIP == 0  && (g_iVipFlags != -2 && get_user_flags(id) & g_iVipFlags))
+	if ((flags & SCORE_STATUS_VIP) == 0 && (g_iVipFlags != -2 && (get_user_flags(target) & g_iVipFlags) != 0))
 	{
 		set_msg_arg_int(2, ARG_BYTE, flags | SCORE_STATUS_VIP);
 	}
@@ -1272,7 +1265,7 @@ stock UpdateUserScoreForPlayer(id, iPlayer)
 			iState |= SCORE_STATUS_BOMB;
 		}
 
-		if (get_member(iPlayer,m_bIsVIP) || (g_iVipFlags != -2 && get_user_flags(iPlayer) & g_iVipFlags))
+		if (get_member(iPlayer,m_bIsVIP) || (g_iVipFlags != -2 && (get_user_flags(iPlayer) & g_iVipFlags) != 0))
 		{
 			iState |= SCORE_STATUS_VIP;
 		}
@@ -1282,7 +1275,7 @@ stock UpdateUserScoreForPlayer(id, iPlayer)
 			iState |= SCORE_STATUS_DEFKIT;
 		}
 
-		if (iState & (SCORE_STATUS_BOMB | SCORE_STATUS_DEFKIT) && GetForceCamera() != CAMERA_MODE_SPEC_ANYONE)
+		if ((iState & (SCORE_STATUS_BOMB | SCORE_STATUS_DEFKIT)) != 0 && GetForceCamera() != CAMERA_MODE_SPEC_ANYONE)
 		{
 			new bool:bIsNotTeam = false;
 	#if REAPI_VERSION > 524300
@@ -1292,12 +1285,12 @@ stock UpdateUserScoreForPlayer(id, iPlayer)
 	#endif
 			if (bIsNotTeam)
 			{
-				if (iState & SCORE_STATUS_BOMB)
+				if ((iState & SCORE_STATUS_BOMB) != 0)
 				{
 					iState -= SCORE_STATUS_BOMB;
 				}
 
-				if (iState & SCORE_STATUS_DEFKIT)
+				if ((iState & SCORE_STATUS_DEFKIT) != 0)
 				{
 					iState -= SCORE_STATUS_DEFKIT;
 				}
